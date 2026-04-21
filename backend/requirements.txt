@@ -1,0 +1,8 @@
+uvicorn
+fastapi
+pydantic-settings
+redis
+hiredis
+asyncpg
+google-genai
+httpx
