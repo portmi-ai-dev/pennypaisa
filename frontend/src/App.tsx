@@ -67,6 +67,7 @@ export default function App() {
   const [activeChart, setActiveChart] = useState<'gold' | 'silver' | 'btc' | null>(null);
   const [chartData, setChartData] = useState<any[]>([]);
   const [isChartLoading, setIsChartLoading] = useState(false);
+  const [isChartFallback, setIsChartFallback] = useState(false);
 
   const [marketSentiment, setMarketSentiment] = useState<{
     marketType: 'bull' | 'bear' | 'neutral';
@@ -373,22 +374,49 @@ export default function App() {
   const handleMorphGold = () => setMorphedGold(!morphedGold);
   const handleMorphSilver = () => setMorphedSilver(!morphedSilver);
 
+  const buildFallbackHistory = (price: number) => {
+    const now = Date.now();
+    return Array.from({ length: 30 }).map((_, index) => {
+      const time = now - (29 - index) * 24 * 60 * 60 * 1000;
+      return {
+        time: Math.floor(time / 1000),
+        open: price,
+        high: price,
+        low: price,
+        close: price
+      };
+    });
+  };
+
   const fetchHistory = async (asset: 'gold' | 'silver' | 'btc') => {
+    setActiveChart(asset);
+    setChartData([]);
+    setIsChartFallback(false);
     setIsChartLoading(true);
     try {
       const response = await fetch(`/api/history/${asset}`);
       const data = await response.json();
-      if (Array.isArray(data)) {
+      if (Array.isArray(data) && data.length > 0) {
         setChartData(data);
+        setIsChartFallback(false);
+        setActiveChart(asset);
+      } else if (Array.isArray(data) && data.length === 0) {
+        const price = asset === 'gold' ? goldPrice : asset === 'silver' ? silverPrice : btcPrice;
+        setChartData(buildFallbackHistory(price));
+        setIsChartFallback(true);
         setActiveChart(asset);
       } else {
         console.error("API returned error or invalid format:", data);
-        setChartData([]); // Clear old data
-        setActiveChart(asset); // Still show chart container with "loading/error" state
+        const price = asset === 'gold' ? goldPrice : asset === 'silver' ? silverPrice : btcPrice;
+        setChartData(buildFallbackHistory(price));
+        setIsChartFallback(true);
+        setActiveChart(asset);
       }
     } catch (error) {
       console.error("Failed to fetch history:", error);
-      setChartData([]);
+      const price = asset === 'gold' ? goldPrice : asset === 'silver' ? silverPrice : btcPrice;
+      setChartData(buildFallbackHistory(price));
+      setIsChartFallback(true);
       setActiveChart(asset);
     } finally {
       setIsChartLoading(false);
@@ -581,6 +609,8 @@ export default function App() {
         data={chartData}
         title={activeChart === 'gold' ? 'Gold Spot / USD' : activeChart === 'silver' ? 'Silver Spot / USD' : 'Bitcoin / USD'}
         color={activeChart === 'gold' ? '#FFD700' : activeChart === 'silver' ? '#C0C0C0' : '#f7931a'}
+        isFallback={isChartFallback}
+        isLoading={isChartLoading}
         onClose={() => setActiveChart(null)}
       />
 

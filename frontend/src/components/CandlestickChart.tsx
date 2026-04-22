@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Activity } from 'lucide-react';
@@ -17,6 +17,8 @@ interface CandlestickChartProps {
   isVisible: boolean;
   onClose: () => void;
   color?: string;
+  isFallback?: boolean;
+  isLoading?: boolean;
 }
 
 export const CandlestickChart: React.FC<CandlestickChartProps> = ({ 
@@ -24,8 +26,27 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   title, 
   isVisible, 
   onClose,
-  color = '#FFD700' 
+  color = '#FFD700',
+  isFallback = false,
+  isLoading = false
 }) => {
+  const chartRef = useRef<ReactECharts>(null);
+
+  useEffect(() => {
+    if (!isVisible) return;
+
+    const handleResize = () => {
+      chartRef.current?.getEchartsInstance().resize();
+    };
+
+    const raf = requestAnimationFrame(handleResize);
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [isVisible]);
   const options = useMemo(() => {
     if (data.length === 0) return {};
 
@@ -64,14 +85,16 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
         },
         formatter: (params: any) => {
           const p = params[0];
+          const [open, close, low, high] = p.data as number[];
+          const format = (value: number) => `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
           return `
             <div style="padding: 4px;">
               <div style="color: ${color}; font-weight: bold; margin-bottom: 4px;">${p.name}</div>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 10px;">
-                <span style="color: rgba(255,255,255,0.4)">OPEN</span> <span>${p.data[1]}</span>
-                <span style="color: rgba(255,255,255,0.4)">CLOSE</span> <span>${p.data[2]}</span>
-                <span style="color: rgba(255,255,255,0.4)">LOW</span> <span>${p.data[3]}</span>
-                <span style="color: rgba(255,255,255,0.4)">HIGH</span> <span>${p.data[4]}</span>
+                <span style="color: rgba(255,255,255,0.4)">OPEN</span> <span>${format(open)}</span>
+                <span style="color: rgba(255,255,255,0.4)">CLOSE</span> <span>${format(close)}</span>
+                <span style="color: rgba(255,255,255,0.4)">LOW</span> <span>${format(low)}</span>
+                <span style="color: rgba(255,255,255,0.4)">HIGH</span> <span>${format(high)}</span>
               </div>
             </div>
           `;
@@ -137,7 +160,14 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
           <div className="flex justify-between items-center mb-4">
             <div className="flex flex-col">
               <span className="text-[10px] tracking-[0.4em] text-white/30 uppercase font-mono mb-1">ECharts Intel</span>
-              <h3 className="text-xl font-light text-white font-mono tracking-tight">{title}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xl font-light text-white font-mono tracking-tight">{title}</h3>
+                {isFallback && (
+                  <span className="text-[9px] font-mono uppercase tracking-widest text-white/40 border border-white/10 px-2 py-1 rounded-full">
+                    Fallback Data
+                  </span>
+                )}
+              </div>
             </div>
             <button 
               onClick={onClose}
@@ -147,8 +177,19 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
             </button>
           </div>
           <div className="flex-1 w-full relative">
-            {data.length > 0 ? (
+            {isLoading && data.length === 0 ? (
+              <div className="w-full h-full flex flex-col items-center justify-center text-center p-8">
+                <div className="w-12 h-12 rounded-full border border-white/10 flex items-center justify-center mb-4 animate-pulse">
+                  <Activity size={24} className="text-white/20" />
+                </div>
+                <span className="text-[10px] text-white/40 font-mono tracking-widest uppercase mb-2">Loading Candles</span>
+                <p className="text-[9px] text-white/20 font-mono max-w-[200px]">
+                  Requesting the latest OHLC history from CoinGecko.
+                </p>
+              </div>
+            ) : data.length > 0 ? (
               <ReactECharts 
+                ref={chartRef}
                 option={options} 
                 style={{ height: '100%', width: '100%' }}
                 theme="dark"
