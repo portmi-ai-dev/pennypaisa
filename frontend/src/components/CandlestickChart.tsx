@@ -11,6 +11,8 @@ interface ChartData {
   close: number;
 }
 
+type Interval = '1m' | '5m' | '15m' | '1h' | '1d' | '1w' | '1mo';
+
 interface CandlestickChartProps {
   data: ChartData[];
   title: string;
@@ -19,16 +21,25 @@ interface CandlestickChartProps {
   color?: string;
   isFallback?: boolean;
   isLoading?: boolean;
+  interval?: Interval;
+  onIntervalChange?: (interval: Interval) => void;
 }
 
-export const CandlestickChart: React.FC<CandlestickChartProps> = ({ 
-  data, 
-  title, 
-  isVisible, 
+const INTERVALS: Interval[] = ['1m', '5m', '15m', '1h', '1d', '1w', '1mo'];
+
+const BULL_COLOR = '#22c55e';
+const BEAR_COLOR = '#ef4444';
+
+export const CandlestickChart: React.FC<CandlestickChartProps> = ({
+  data,
+  title,
+  isVisible,
   onClose,
   color = '#FFD700',
   isFallback = false,
-  isLoading = false
+  isLoading = false,
+  interval = '1d',
+  onIntervalChange,
 }) => {
   const chartRef = useRef<ReactECharts>(null);
 
@@ -51,9 +62,22 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     if (data.length === 0) return {};
 
     // ECharts Candlestick format: [open, close, low, high]
+    const isIntraday = interval === '1m' || interval === '5m' || interval === '15m' || interval === '1h';
+    const isMonthly = interval === '1mo';
     const dates = data.map(item => {
       const d = new Date(item.time * 1000);
-      return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${d.getMinutes().toString().padStart(2, '0')}`;
+      const yyyy = d.getFullYear();
+      const mm = (d.getMonth() + 1).toString().padStart(2, '0');
+      const dd = d.getDate().toString().padStart(2, '0');
+      if (isIntraday) {
+        const hh = d.getHours().toString().padStart(2, '0');
+        const mi = d.getMinutes().toString().padStart(2, '0');
+        return `${mm}/${dd} ${hh}:${mi}`;
+      }
+      if (isMonthly) {
+        return `${yyyy}-${mm}`;
+      }
+      return `${yyyy}-${mm}-${dd}`;
     });
     
     const values = data.map(item => [
@@ -84,17 +108,30 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
           fontSize: 10
         },
         formatter: (params: any) => {
-          const p = params[0];
-          const [open, close, low, high] = p.data as number[];
+          const candleParam = Array.isArray(params)
+            ? params.find((entry: any) => entry.seriesType === 'candlestick')
+            : params;
+          if (!candleParam || !Array.isArray(candleParam.data)) return '';
+          // ECharts may prepend the data index to params.data — use the last 4 entries as OCHL.
+          const raw = candleParam.data as number[];
+          const ohlc = raw.slice(-4);
+          const [open, close, low, high] = ohlc;
+          const isBull = close >= open;
+          const accent = isBull ? BULL_COLOR : BEAR_COLOR;
           const format = (value: number) => `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+          const change = close - open;
+          const pct = open ? (change / open) * 100 : 0;
           return `
-            <div style="padding: 4px;">
-              <div style="color: ${color}; font-weight: bold; margin-bottom: 4px;">${p.name}</div>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 10px;">
+            <div style="padding: 4px; min-width: 150px;">
+              <div style="color: ${color}; font-weight: bold; margin-bottom: 4px;">${candleParam.name}</div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 10px;">
                 <span style="color: rgba(255,255,255,0.4)">OPEN</span> <span>${format(open)}</span>
-                <span style="color: rgba(255,255,255,0.4)">CLOSE</span> <span>${format(close)}</span>
-                <span style="color: rgba(255,255,255,0.4)">LOW</span> <span>${format(low)}</span>
                 <span style="color: rgba(255,255,255,0.4)">HIGH</span> <span>${format(high)}</span>
+                <span style="color: rgba(255,255,255,0.4)">LOW</span> <span>${format(low)}</span>
+                <span style="color: rgba(255,255,255,0.4)">CLOSE</span> <span>${format(close)}</span>
+              </div>
+              <div style="margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 10px; color: ${accent};">
+                ${isBull ? '▲' : '▼'} ${format(Math.abs(change))} (${pct.toFixed(2)}%)
               </div>
             </div>
           `;
@@ -103,26 +140,57 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
       grid: {
         left: '10%',
         right: '5%',
-        bottom: '15%',
-        top: '10%'
+        bottom: '20%',
+        top: '8%'
       },
+      dataZoom: [
+        {
+          type: 'inside',
+          start: Math.max(0, 100 - (60 / Math.max(values.length, 1)) * 100),
+          end: 100,
+          zoomLock: false,
+          minValueSpan: 5,
+        },
+        {
+          type: 'slider',
+          show: true,
+          height: 16,
+          bottom: 26,
+          start: Math.max(0, 100 - (60 / Math.max(values.length, 1)) * 100),
+          end: 100,
+          backgroundColor: 'rgba(255,255,255,0.02)',
+          fillerColor: 'rgba(255,255,255,0.08)',
+          borderColor: 'rgba(255,255,255,0.05)',
+          handleStyle: { color: 'rgba(255,255,255,0.5)' },
+          textStyle: { color: 'rgba(255,255,255,0.4)', fontSize: 9, fontFamily: 'JetBrains Mono' },
+          dataBackground: {
+            lineStyle: { color: 'rgba(255,255,255,0.15)' },
+            areaStyle: { color: 'rgba(255,255,255,0.04)' },
+          },
+        },
+      ],
       xAxis: {
         type: 'category',
         data: dates,
-        scale: true,
-        boundaryGap: false,
+        boundaryGap: true,
         axisLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.1)' } },
-        axisLabel: { color: 'rgba(255, 255, 255, 0.3)', fontSize: 10, fontFamily: 'JetBrains Mono' },
+        axisTick: { show: false },
+        axisLabel: {
+          color: 'rgba(255, 255, 255, 0.3)',
+          fontSize: 10,
+          fontFamily: 'JetBrains Mono',
+          hideOverlap: true
+        },
         splitLine: { show: false }
       },
       yAxis: {
         scale: true,
         axisLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.1)' } },
-        axisLabel: { 
-          color: 'rgba(255, 255, 255, 0.3)', 
-          fontSize: 10, 
+        axisLabel: {
+          color: 'rgba(255, 255, 255, 0.3)',
+          fontSize: 10,
           fontFamily: 'JetBrains Mono',
-          formatter: (value: number) => `$${value.toLocaleString()}`
+          formatter: (value: number) => `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
         },
         splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } }
       },
@@ -130,11 +198,13 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
         {
           type: 'candlestick',
           data: values,
+          barMaxWidth: 14,
           itemStyle: {
-            color: color,
-            color0: '#ef5350',
-            borderColor: color,
-            borderColor0: '#ef5350'
+            color: BULL_COLOR,
+            color0: BEAR_COLOR,
+            borderColor: BULL_COLOR,
+            borderColor0: BEAR_COLOR,
+            borderWidth: 1
           },
           emphasis: {
             itemStyle: {
@@ -143,9 +213,9 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
           }
         }
       ],
-      animationDuration: 1000
+      animationDuration: 400
     };
-  }, [data, color]);
+  }, [data, color, interval]);
 
   return (
     <AnimatePresence>
@@ -162,20 +232,42 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
               <span className="text-[10px] tracking-[0.4em] text-white/30 uppercase font-mono mb-1">ECharts Intel</span>
               <div className="flex items-center gap-2">
                 <h3 className="text-xl font-light text-white font-mono tracking-tight">{title}</h3>
-                {isFallback && (
+                {isFallback ? (
                   <span className="text-[9px] font-mono uppercase tracking-widest text-white/40 border border-white/10 px-2 py-1 rounded-full">
                     Fallback Data
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-widest text-emerald-400/70 border border-emerald-400/20 px-2 py-1 rounded-full">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Live
                   </span>
                 )}
               </div>
             </div>
-            <button 
+            <button
               onClick={onClose}
               className="w-8 h-8 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-white transition-colors"
             >
               <X size={16} />
             </button>
           </div>
+          {onIntervalChange && (
+            <div className="flex gap-1 mb-3">
+              {INTERVALS.map((iv) => (
+                <button
+                  key={iv}
+                  onClick={() => onIntervalChange(iv)}
+                  className={`px-2.5 py-1 rounded-full text-[9px] font-mono uppercase tracking-widest border transition-colors ${
+                    interval === iv
+                      ? 'bg-white/10 border-white/30 text-white'
+                      : 'bg-transparent border-white/10 text-white/40 hover:text-white/70 hover:border-white/20'
+                  }`}
+                >
+                  {iv}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex-1 w-full relative">
             {isLoading && data.length === 0 ? (
               <div className="w-full h-full flex flex-col items-center justify-center text-center p-8">
@@ -184,7 +276,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
                 </div>
                 <span className="text-[10px] text-white/40 font-mono tracking-widest uppercase mb-2">Loading Candles</span>
                 <p className="text-[9px] text-white/20 font-mono max-w-[200px]">
-                  Requesting the latest OHLC history from CoinGecko.
+                  Streaming live OHLC from {title.startsWith('Bitcoin') ? 'Binance' : 'Yahoo Finance'}.
                 </p>
               </div>
             ) : data.length > 0 ? (
@@ -201,7 +293,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
                 </div>
                 <span className="text-[10px] text-white/40 font-mono tracking-widest uppercase mb-2">Market Sync in Progress</span>
                 <p className="text-[9px] text-white/20 font-mono max-w-[200px]">
-                  Aggregating CoinGecko OHLC data. If this persists, the public API rate limit may have been reached.
+                  Aggregating live OHLC data. If this persists, the upstream feed may be temporarily unavailable.
                 </p>
               </div>
             )}

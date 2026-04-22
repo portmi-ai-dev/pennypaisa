@@ -68,6 +68,7 @@ export default function App() {
   const [chartData, setChartData] = useState<any[]>([]);
   const [isChartLoading, setIsChartLoading] = useState(false);
   const [isChartFallback, setIsChartFallback] = useState(false);
+  const [chartInterval, setChartInterval] = useState<'1m' | '5m' | '15m' | '1h' | '1d' | '1w' | '1mo'>('1d');
 
   const [marketSentiment, setMarketSentiment] = useState<{
     marketType: 'bull' | 'bear' | 'neutral';
@@ -378,50 +379,74 @@ export default function App() {
     const now = Date.now();
     return Array.from({ length: 30 }).map((_, index) => {
       const time = now - (29 - index) * 24 * 60 * 60 * 1000;
+      const open = price * (1 + 0.01 * Math.sin(index / 2.3));
+      const close = price * (1 + 0.01 * Math.sin(index / 2.3 + 1.4));
+      const wick = price * (0.005 + 0.007 * Math.abs(Math.sin(index / 1.7 + 0.5)));
+      const high = Math.max(open, close) + wick;
+      const low = Math.min(open, close) - wick;
       return {
         time: Math.floor(time / 1000),
-        open: price,
-        high: price,
-        low: price,
-        close: price
+        open,
+        high,
+        low,
+        close,
       };
     });
   };
 
-  const fetchHistory = async (asset: 'gold' | 'silver' | 'btc') => {
+  const loadHistory = async (
+    asset: 'gold' | 'silver' | 'btc',
+    interval: string,
+    isInitial: boolean
+  ) => {
+    if (isInitial) setIsChartLoading(true);
+    try {
+      const response = await fetch(`/api/history/${asset}?interval=${interval}`);
+      const data = await response.json();
+      if (Array.isArray(data) && data.length > 0 && data[0].open !== undefined) {
+        setChartData(data);
+        setIsChartFallback(false);
+      } else {
+        const price = asset === 'gold' ? goldPrice : asset === 'silver' ? silverPrice : btcPrice;
+        setChartData(buildFallbackHistory(price));
+        setIsChartFallback(true);
+      }
+    } catch (error) {
+      console.warn('Failed to fetch history:', error);
+      if (isInitial) {
+        const price = asset === 'gold' ? goldPrice : asset === 'silver' ? silverPrice : btcPrice;
+        setChartData(buildFallbackHistory(price));
+        setIsChartFallback(true);
+      }
+    } finally {
+      if (isInitial) setIsChartLoading(false);
+    }
+  };
+
+  const fetchHistory = (asset: 'gold' | 'silver' | 'btc') => {
     setActiveChart(asset);
     setChartData([]);
     setIsChartFallback(false);
-    setIsChartLoading(true);
-    try {
-      const response = await fetch(`/api/history/${asset}`);
-      const data = await response.json();
-      if (Array.isArray(data) && data.length > 0) {
-        setChartData(data);
-        setIsChartFallback(false);
-        setActiveChart(asset);
-      } else if (Array.isArray(data) && data.length === 0) {
-        const price = asset === 'gold' ? goldPrice : asset === 'silver' ? silverPrice : btcPrice;
-        setChartData(buildFallbackHistory(price));
-        setIsChartFallback(true);
-        setActiveChart(asset);
-      } else {
-        console.error("API returned error or invalid format:", data);
-        const price = asset === 'gold' ? goldPrice : asset === 'silver' ? silverPrice : btcPrice;
-        setChartData(buildFallbackHistory(price));
-        setIsChartFallback(true);
-        setActiveChart(asset);
-      }
-    } catch (error) {
-      console.error("Failed to fetch history:", error);
-      const price = asset === 'gold' ? goldPrice : asset === 'silver' ? silverPrice : btcPrice;
-      setChartData(buildFallbackHistory(price));
-      setIsChartFallback(true);
-      setActiveChart(asset);
-    } finally {
-      setIsChartLoading(false);
-    }
+    loadHistory(asset, chartInterval, true);
   };
+
+  // Real-time polling: refresh candles while the chart is open.
+  useEffect(() => {
+    if (!activeChart) return;
+    loadHistory(activeChart, chartInterval, chartData.length === 0);
+    const refreshMs = chartInterval === '1m' ? 15000
+      : chartInterval === '5m' ? 30000
+      : chartInterval === '15m' ? 60000
+      : chartInterval === '1h' ? 120000
+      : chartInterval === '1d' ? 300000
+      : chartInterval === '1w' ? 600000
+      : 1800000;
+    const id = setInterval(() => {
+      loadHistory(activeChart, chartInterval, false);
+    }, refreshMs);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChart, chartInterval]);
 
   const isAnyMorphed = morphedGold || morphedSilver;
 
@@ -604,13 +629,15 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <CandlestickChart 
+      <CandlestickChart
         isVisible={!!activeChart}
         data={chartData}
         title={activeChart === 'gold' ? 'Gold Spot / USD' : activeChart === 'silver' ? 'Silver Spot / USD' : 'Bitcoin / USD'}
         color={activeChart === 'gold' ? '#FFD700' : activeChart === 'silver' ? '#C0C0C0' : '#f7931a'}
         isFallback={isChartFallback}
         isLoading={isChartLoading}
+        interval={chartInterval}
+        onIntervalChange={setChartInterval}
         onClose={() => setActiveChart(null)}
       />
 
