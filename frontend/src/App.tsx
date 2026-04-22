@@ -8,7 +8,8 @@ import { GoldBullion } from './components/GoldBullion';
 import { SilverBullion } from './components/SilverBullion';
 import { Tether } from './components/Tether';
 import { BitcoinCuboid } from './components/BitcoinCuboid';
-import { ArrowLeft, ArrowUp, ArrowDown } from 'lucide-react';
+import { CandlestickChart } from './components/CandlestickChart';
+import { ArrowLeft, ArrowUp, ArrowDown, Activity } from 'lucide-react';
 import { soundManager } from './lib/sounds';
 
 import { motion, AnimatePresence } from 'motion/react';
@@ -61,6 +62,12 @@ export default function App() {
   const [showBlockchain, setShowBlockchain] = useState(false);
   const [btcVolume24h, setBtcVolume24h] = useState("$35.2B");
   const [btcVolumeChangePercent, setBtcVolumeChangePercent] = useState(0);
+
+// Chart State
+  const [activeChart, setActiveChart] = useState<'gold' | 'silver' | 'btc' | null>(null);
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [isChartLoading, setIsChartLoading] = useState(false);
+
   const [marketSentiment, setMarketSentiment] = useState<{
     marketType: 'bull' | 'bear' | 'neutral';
     reasoning: string;
@@ -366,6 +373,28 @@ export default function App() {
   const handleMorphGold = () => setMorphedGold(!morphedGold);
   const handleMorphSilver = () => setMorphedSilver(!morphedSilver);
 
+  const fetchHistory = async (asset: 'gold' | 'silver' | 'btc') => {
+    setIsChartLoading(true);
+    try {
+      const response = await fetch(`/api/history/${asset}`);
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        setChartData(data);
+        setActiveChart(asset);
+      } else {
+        console.error("API returned error or invalid format:", data);
+        setChartData([]); // Clear old data
+        setActiveChart(asset); // Still show chart container with "loading/error" state
+      }
+    } catch (error) {
+      console.error("Failed to fetch history:", error);
+      setChartData([]);
+      setActiveChart(asset);
+    } finally {
+      setIsChartLoading(false);
+    }
+  };
+
   const isAnyMorphed = morphedGold || morphedSilver;
 
   return (
@@ -547,6 +576,14 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      <CandlestickChart 
+        isVisible={!!activeChart}
+        data={chartData}
+        title={activeChart === 'gold' ? 'Gold Spot / USD' : activeChart === 'silver' ? 'Silver Spot / USD' : 'Bitcoin / USD'}
+        color={activeChart === 'gold' ? '#FFD700' : activeChart === 'silver' ? '#C0C0C0' : '#f7931a'}
+        onClose={() => setActiveChart(null)}
+      />
+
       {/* Merge Button - Bottom Left */}
       <div className={`absolute bottom-12 left-12 z-20 transition-opacity duration-500 ${isAnyMorphed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <motion.button
@@ -566,32 +603,55 @@ export default function App() {
         </motion.button>
       </div>
 
-      {/* Market Info Display - Bottom Right */}
-      <div className={`absolute bottom-8 right-8 z-20 flex flex-col gap-6 transition-opacity duration-500 ${isAnyMorphed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-        <div className="w-72 bg-white/[0.02] backdrop-blur-2xl p-8 rounded-[2rem] border border-white/5 flex flex-col gap-6">
-          <div className="flex justify-between items-center">
-            <div className="flex flex-col">
-              <span className="text-[9px] tracking-[0.2em] text-white/30 uppercase font-mono mb-1">XAU Spot</span>
-              <span className="text-2xl font-extralight text-[#FFD700] font-mono tracking-tight">${goldPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}<span className="text-sm text-white/50 ml-1">/oz</span></span>
-              <div className={`flex items-center gap-1.5 mt-1 text-sm font-mono font-bold ${goldChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                {goldChange >= 0 ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
+      {/* Market Info Display - Centered Bottom Horizontal Layout */}
+      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 z-20 transition-opacity duration-500 ${isAnyMorphed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+        <div className="bg-white/[0.02] backdrop-blur-3xl px-12 py-6 rounded-[2.5rem] border border-white/5 flex flex-row items-center gap-16">
+          <div 
+            onClick={() => fetchHistory('gold')}
+            className="flex items-center gap-6 cursor-pointer group hover:bg-white/[0.03] px-6 py-3 -mx-6 rounded-2xl transition-all"
+          >
+            <div className="flex flex-col items-center">
+              <span className="text-[9px] tracking-[0.2em] text-white/30 uppercase font-mono mb-1 group-hover:text-[#FFD700] transition-colors">XAU Spot</span>
+              <span className="text-2xl font-extralight text-[#FFD700] font-mono tracking-tighter">${goldPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}<span className="text-sm text-white/50 ml-1">/oz</span></span>
+              <div className={`flex items-center gap-1.5 mt-1 text-xs font-mono font-bold ${goldChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                {goldChange >= 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
                 <span>${Math.abs(goldChange).toFixed(2)}</span>
                 <span>({Math.abs(goldChangePercent).toFixed(2)}%)</span>
               </div>
             </div>
-            <div className="w-1 h-12 bg-[#FFD700]/20 rounded-full" />
           </div>
-          <div className="flex justify-between items-center">
-            <div className="flex flex-col">
-              <span className="text-[9px] tracking-[0.2em] text-white/30 uppercase font-mono mb-1">XAG Spot</span>
-              <span className="text-2xl font-extralight text-[#C0C0C0] font-mono tracking-tight">${silverPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}<span className="text-sm text-white/50 ml-1">/oz</span></span>
-              <div className={`flex items-center gap-1.5 mt-1 text-sm font-mono font-bold ${silverChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                {silverChange >= 0 ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
+          <div className="w-px h-12 bg-white/5" />
+
+          <div 
+            onClick={() => fetchHistory('silver')}
+            className="flex items-center gap-6 cursor-pointer group hover:bg-white/[0.04] px-6 py-3 -mx-6 rounded-2xl transition-all"
+          >
+            <div className="flex flex-col items-center">
+              <span className="text-[9px] tracking-[0.2em] text-white/30 uppercase font-mono mb-1 group-hover:text-[#C0C0C0] transition-colors">XAG Spot</span>
+              <span className="text-2xl font-extralight text-[#C0C0C0] font-mono tracking-tighter">${silverPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}<span className="text-sm text-white/50 ml-1">/oz</span></span>
+              <div className={`flex items-center gap-1.5 mt-1 text-xs font-mono font-bold ${silverChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                {silverChange >= 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
                 <span>${Math.abs(silverChange).toFixed(2)}</span>
                 <span>({Math.abs(silverChangePercent).toFixed(2)}%)</span>
               </div>
             </div>
-            <div className="w-1 h-12 bg-[#C0C0C0]/20 rounded-full" />
+            </div>
+
+          <div className="w-px h-12 bg-white/5" />
+
+          <div 
+            onClick={() => fetchHistory('btc')}
+            className="flex items-center gap-6 cursor-pointer group hover:bg-white/[0.05] px-6 py-3 -mx-6 rounded-2xl transition-all"
+          >
+            <div className="flex flex-col items-center">
+              <span className="text-[9px] tracking-[0.2em] text-white/30 uppercase font-mono mb-1 group-hover:text-[#F7931A] transition-colors">BTC / USD</span>
+              <span className="text-2xl font-extralight text-[#F7931A] font-mono tracking-tighter">${btcPrice.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}<span className="text-sm text-white/50 ml-1">/coin</span></span>
+              <div className={`flex items-center gap-1.5 mt-1 text-xs font-mono font-bold ${btcChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                {btcChange >= 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+                <span>${Math.abs(btcChange).toFixed(0)}</span>
+                <span>({Math.abs(btcChangePercent).toFixed(2)}%)</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>

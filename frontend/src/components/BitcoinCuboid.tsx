@@ -360,13 +360,7 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
               <boxGeometry args={[2.2, 2.2, 2.2]} />
               <meshBasicMaterial color="#00ffff" wireframe transparent opacity={0.3} />
             </mesh>
-            
-            {/* Secondary Circuitry Core (Magenta) */}
-            <mesh scale={0.96} rotation={[0.5, 0.5, 0.5]}>
-              <boxGeometry args={[2.2, 2.2, 2.2]} />
-              <meshBasicMaterial color="#ff00ff" wireframe transparent opacity={0.15} />
-            </mesh>
-            
+
             {/* Solid Inner CPU Core */}
             <mesh scale={0.3}>
               <boxGeometry args={[2.2, 2.2, 2.2]} />
