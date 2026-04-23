@@ -2,28 +2,38 @@ import * as React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { ASSET_CONFIG, openChartTab, type AssetKey, type Prices } from '../lib/marketData';
 
+interface Condition {
+  text: string;
+  /** `true` when this driver is meaningfully in play right now. Highlighted in the UI. */
+  active?: boolean;
+  /** Optional one-liner shown on hover explaining *why* it's currently active. */
+  why?: string;
+}
+
 interface ConditionConfig {
-  bull: string[];
-  bear: string[];
+  bull: Condition[];
+  bear: Condition[];
   sectors: { l: string; pct: number }[];
   prompt: (p: any, ratio?: number) => string;
 }
 
+// "active" flags reflect macro conditions verifiably in play as of Q2 2026.
+// Edit these when the regime shifts — they drive the LIVE highlight in the UI.
 const COND: Record<AssetKey, ConditionConfig> = {
   gold: {
     bull: [
-      'Cyclic ATH pattern (~15yr cycles)',
-      'War & geopolitical fear',
-      'Inflation hedge \u00b7 De-dollarization',
-      'Central bank accumulation',
-      'Weak US Dollar demand',
+      { text: 'Cyclic ATH pattern (~15yr cycles)', active: true, why: 'Gold breaking new all-time highs through 2025-26.' },
+      { text: 'War & geopolitical fear', active: true, why: 'Active conflicts and elevated geopolitical risk premium.' },
+      { text: 'Inflation hedge \u00b7 De-dollarization', active: true, why: 'BRICS+ reserve diversification accelerating.' },
+      { text: 'Central bank accumulation', active: true, why: 'Record central-bank buying for the 4th consecutive year.' },
+      { text: 'Weak US Dollar demand' },
     ],
     bear: [
-      'Prolonged consolidation periods',
-      'Strong US Dollar',
-      'Risk-on capital rotation',
-      'Rising interest rates',
-      'Cooling inflation narrative',
+      { text: 'Prolonged consolidation periods' },
+      { text: 'Strong US Dollar' },
+      { text: 'Risk-on capital rotation' },
+      { text: 'Rising interest rates' },
+      { text: 'Cooling inflation narrative', active: true, why: 'Headline CPI moderating from 2022 highs.' },
     ],
     sectors: [
       { l: 'Investment (ETFs, Bars, Coins)', pct: 45 },
@@ -38,18 +48,18 @@ const COND: Record<AssetKey, ConditionConfig> = {
   },
   silver: {
     bull: [
-      'Structural supply deficit deepening',
-      'AI & data center demand',
-      'Solar + EV battery absorption',
-      'Follows gold bull cycles',
-      'Dual store-of-value identity',
+      { text: 'Structural supply deficit deepening', active: true, why: 'Silver Institute reports 5th consecutive deficit year.' },
+      { text: 'AI & data center demand', active: true, why: 'Hyperscaler buildouts driving conductive-silver demand.' },
+      { text: 'Solar + EV battery absorption', active: true, why: 'Global solar installs continuing record pace.' },
+      { text: 'Follows gold bull cycles', active: true, why: 'Gold at ATH typically pulls silver higher with lag.' },
+      { text: 'Dual store-of-value identity' },
     ],
     bear: [
-      'Massive profit-taking after parabolic rises',
-      'Narrative exaggeration near tops',
-      'Gold consolidation drags silver',
-      'High volatility downside risk',
-      'Industrial slowdown scenarios',
+      { text: 'Massive profit-taking after parabolic rises' },
+      { text: 'Narrative exaggeration near tops' },
+      { text: 'Gold consolidation drags silver' },
+      { text: 'High volatility downside risk', active: true, why: 'Silver beta to gold remains elevated.' },
+      { text: 'Industrial slowdown scenarios' },
     ],
     sectors: [
       { l: 'Industrial & Technology', pct: 52 },
@@ -64,18 +74,18 @@ const COND: Record<AssetKey, ConditionConfig> = {
   },
   bitcoin: {
     bull: [
-      '4-year halving cycle bull phase',
-      'Fed rate cuts & M2 expansion',
-      'Institutional & ETF adoption',
-      'Government treasury accumulation',
-      'Falling DXY tailwind',
+      { text: '4-year halving cycle bull phase', active: true, why: 'Post-2024-halving cycle still in expansion phase.' },
+      { text: 'Fed rate cuts & M2 expansion' },
+      { text: 'Institutional & ETF adoption', active: true, why: 'Spot BTC ETFs continue record AUM growth.' },
+      { text: 'Government treasury accumulation', active: true, why: 'US Strategic Bitcoin Reserve and sovereign buyers active.' },
+      { text: 'Falling DXY tailwind' },
     ],
     bear: [
-      '70%+ post-cycle drawdowns',
-      'FUD & macro shock risk',
-      'Fed hawkish pivot scenario',
-      'Government crackdown / ban risk',
-      'Quantum computing narrative',
+      { text: '70%+ post-cycle drawdowns', why: 'Risk increases as cycle matures.' },
+      { text: 'FUD & macro shock risk', active: true, why: 'Elevated macro volatility persists.' },
+      { text: 'Fed hawkish pivot scenario' },
+      { text: 'Government crackdown / ban risk' },
+      { text: 'Quantum computing narrative' },
     ],
     sectors: [
       { l: 'Institutional Holdings', pct: 38 },
@@ -326,47 +336,198 @@ export const IntelligencePage: React.FC<Props> = ({ prices }) => {
                   {isBull ? '\u25b2' : '\u25bc'} {Math.abs(change).toFixed(2)}%
                 </span>
                 <span style={{ fontFamily: 'DM Sans', fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>24h change</span>
-                {activeAsset !== 'bitcoin' && prices?.goldSilverRatio && (
-                  <span style={{ fontFamily: 'DM Sans', fontSize: 11, color: 'rgba(255,255,255,0.3)', marginLeft: 8 }}>
-                    Au:Ag <span style={{ color: '#d4a843' }}>{prices.goldSilverRatio.toFixed(1)}×</span>
-                  </span>
-                )}
                 {activeAsset === 'bitcoin' && price?.dominance && (
                   <span style={{ fontFamily: 'DM Sans', fontSize: 11, color: 'rgba(255,255,255,0.3)', marginLeft: 8 }}>
                     Dom <span style={{ color: '#f7931a' }}>{price.dominance.toFixed(1)}%</span>
                   </span>
                 )}
               </div>
+
+              {/* Gold:Silver ratio — prominent, clickable pill (only for gold/silver).
+                  Clicking toggles between the two sides of the ratio so users can
+                  compare without hunting for the asset tab. */}
+              {activeAsset !== 'bitcoin' && prices?.goldSilverRatio != null && (
+                <button
+                  onClick={() => setActiveAsset(activeAsset === 'gold' ? 'silver' : 'gold')}
+                  title={`Gold:Silver ratio — historic mean ~60×. Above 80× = silver historically undervalued vs gold. Click to switch to ${activeAsset === 'gold' ? 'silver' : 'gold'}.`}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background =
+                      'linear-gradient(135deg, rgba(212,168,67,0.22) 0%, rgba(184,196,204,0.18) 100%)';
+                    e.currentTarget.style.borderColor = 'rgba(212,168,67,0.7)';
+                    e.currentTarget.style.boxShadow = '0 0 18px rgba(212,168,67,0.35)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background =
+                      'linear-gradient(135deg, rgba(212,168,67,0.13) 0%, rgba(184,196,204,0.1) 100%)';
+                    e.currentTarget.style.borderColor = 'rgba(212,168,67,0.45)';
+                    e.currentTarget.style.boxShadow = '0 0 12px rgba(212,168,67,0.18)';
+                  }}
+                  style={{
+                    marginTop: 16,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 14,
+                    padding: '12px 18px',
+                    background:
+                      'linear-gradient(135deg, rgba(212,168,67,0.13) 0%, rgba(184,196,204,0.1) 100%)',
+                    border: '1px solid rgba(212,168,67,0.45)',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    boxShadow: '0 0 12px rgba(212,168,67,0.18)',
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+                    <span
+                      style={{
+                        fontFamily: 'DM Sans',
+                        fontSize: 9,
+                        letterSpacing: 2,
+                        color: 'rgba(255,255,255,0.55)',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      Au : Ag Ratio
+                    </span>
+                    <span
+                      style={{
+                        fontFamily: 'Cormorant Garamond, serif',
+                        fontSize: 26,
+                        fontWeight: 400,
+                        color: '#f3d98a',
+                        lineHeight: 1,
+                      }}
+                    >
+                      {prices.goldSilverRatio.toFixed(1)}
+                      <span style={{ fontSize: 16, color: 'rgba(243,217,138,0.7)', marginLeft: 2 }}>×</span>
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      width: 1,
+                      alignSelf: 'stretch',
+                      background: 'rgba(255,255,255,0.12)',
+                      margin: '2px 0',
+                    }}
+                  />
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+                    <span
+                      style={{
+                        fontFamily: 'DM Sans',
+                        fontSize: 9.5,
+                        color:
+                          prices.goldSilverRatio >= 80
+                            ? '#7dd689'
+                            : prices.goldSilverRatio <= 50
+                            ? '#ff8a86'
+                            : 'rgba(255,255,255,0.55)',
+                        fontWeight: 600,
+                        letterSpacing: 0.4,
+                      }}
+                    >
+                      {prices.goldSilverRatio >= 80
+                        ? 'Silver undervalued'
+                        : prices.goldSilverRatio <= 50
+                        ? 'Silver expensive'
+                        : 'Near historical mean'}
+                    </span>
+                    <span
+                      style={{
+                        fontFamily: 'DM Sans',
+                        fontSize: 9.5,
+                        color: 'rgba(255,255,255,0.4)',
+                      }}
+                    >
+                      Mean ~60× · Click to view {activeAsset === 'gold' ? 'silver' : 'gold'} \u21c4
+                    </span>
+                  </div>
+                </button>
+              )}
             </div>
 
             <div style={{ marginBottom: 24 }}>
               <div
                 style={{
-                  fontFamily: 'DM Sans',
-                  fontSize: 9,
-                  letterSpacing: 3,
-                  color: 'rgba(255,255,255,0.22)',
-                  textTransform: 'uppercase',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
                   marginBottom: 14,
                 }}
               >
-                Market Conditions
+                <div
+                  style={{
+                    fontFamily: 'DM Sans',
+                    fontSize: 9,
+                    letterSpacing: 3,
+                    color: 'rgba(255,255,255,0.22)',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  Market Conditions
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontFamily: 'DM Sans',
+                    fontSize: 9,
+                    letterSpacing: 1.6,
+                    color: 'rgba(255,255,255,0.32)',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: '#f5d78e',
+                      boxShadow: '0 0 6px #f5d78eaa',
+                      animation: 'gilverCondPulse 1.4s infinite',
+                    }}
+                  />
+                  Live now
+                </div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
                 {cond.bull.map((b, i) => (
                   <span
                     key={i}
+                    title={b.active ? b.why ?? 'Currently playing out' : b.text}
                     style={{
+                      position: 'relative',
                       fontFamily: 'DM Sans',
-                      fontSize: 10,
-                      color: '#4caf50',
-                      background: 'rgba(76,175,80,0.08)',
-                      border: '1px solid rgba(76,175,80,0.15)',
+                      fontSize: b.active ? 11 : 10,
+                      fontWeight: b.active ? 600 : 400,
+                      color: b.active ? '#7dd689' : 'rgba(76,175,80,0.55)',
+                      background: b.active ? 'rgba(76,175,80,0.18)' : 'rgba(76,175,80,0.05)',
+                      border: b.active
+                        ? '1px solid rgba(76,175,80,0.55)'
+                        : '1px solid rgba(76,175,80,0.1)',
+                      boxShadow: b.active ? '0 0 10px rgba(76,175,80,0.25)' : 'none',
                       borderRadius: 20,
-                      padding: '4px 10px',
+                      padding: b.active ? '5px 11px 5px 20px' : '4px 10px',
+                      transition: 'all 0.2s',
                     }}
                   >
-                    + {b}
+                    {b.active && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: 8,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          background: '#4caf50',
+                          boxShadow: '0 0 6px #4caf50',
+                          animation: 'gilverCondPulse 1.4s infinite',
+                        }}
+                      />
+                    )}
+                    + {b.text}
                   </span>
                 ))}
               </div>
@@ -374,17 +535,40 @@ export const IntelligencePage: React.FC<Props> = ({ prices }) => {
                 {cond.bear.map((b, i) => (
                   <span
                     key={i}
+                    title={b.active ? b.why ?? 'Currently playing out' : b.text}
                     style={{
+                      position: 'relative',
                       fontFamily: 'DM Sans',
-                      fontSize: 10,
-                      color: '#ef5350',
-                      background: 'rgba(239,83,80,0.07)',
-                      border: '1px solid rgba(239,83,80,0.14)',
+                      fontSize: b.active ? 11 : 10,
+                      fontWeight: b.active ? 600 : 400,
+                      color: b.active ? '#ff8a86' : 'rgba(239,83,80,0.55)',
+                      background: b.active ? 'rgba(239,83,80,0.15)' : 'rgba(239,83,80,0.04)',
+                      border: b.active
+                        ? '1px solid rgba(239,83,80,0.55)'
+                        : '1px solid rgba(239,83,80,0.1)',
+                      boxShadow: b.active ? '0 0 10px rgba(239,83,80,0.22)' : 'none',
                       borderRadius: 20,
-                      padding: '4px 10px',
+                      padding: b.active ? '5px 11px 5px 20px' : '4px 10px',
+                      transition: 'all 0.2s',
                     }}
                   >
-                    − {b}
+                    {b.active && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: 8,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          background: '#ef5350',
+                          boxShadow: '0 0 6px #ef5350',
+                          animation: 'gilverCondPulse 1.4s infinite',
+                        }}
+                      />
+                    )}
+                    − {b.text}
                   </span>
                 ))}
               </div>
@@ -593,6 +777,7 @@ export const IntelligencePage: React.FC<Props> = ({ prices }) => {
       <style>{`
         @keyframes gilverIPulse { 0%,100%{opacity:1} 50%{opacity:.3} }
         @keyframes gilverIShim  { 0%,100%{opacity:.25} 50%{opacity:.55} }
+        @keyframes gilverCondPulse { 0%,100%{opacity:1} 50%{opacity:.35} }
       `}</style>
     </div>
   );

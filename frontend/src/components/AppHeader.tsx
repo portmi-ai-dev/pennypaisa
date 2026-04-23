@@ -11,7 +11,7 @@ export interface NavItem {
 }
 
 const IconAssets = (
-  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <rect x="2" y="9" width="8" height="5" rx="1" />
     <rect x="14" y="9" width="8" height="5" rx="1" />
     <line x1="10" y1="11.5" x2="14" y2="11.5" />
@@ -19,12 +19,12 @@ const IconAssets = (
   </svg>
 );
 const IconIntel = (
-  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
   </svg>
 );
 const IconChat = (
-  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
   </svg>
 );
@@ -73,8 +73,8 @@ export const AppHeader: React.FC<Props> = ({ page, setPage, prices, loading }) =
       style={{
         display: 'flex',
         alignItems: 'center',
-        height: 54,
-        padding: '0 24px',
+        height: 64,
+        padding: '0 28px',
         borderBottom: '1px solid rgba(255,255,255,0.05)',
         background: 'rgba(4,4,10,0.96)',
         backdropFilter: 'blur(24px)',
@@ -106,30 +106,44 @@ export const AppHeader: React.FC<Props> = ({ page, setPage, prices, loading }) =
       </div>
 
       {/* Nav */}
-      <nav style={{ display: 'flex', gap: 2 }}>
+      <nav style={{ display: 'flex', gap: 4 }}>
         {NAV_ITEMS.map(({ id, label, icon, accent }) => {
           const active = page === id;
           return (
             <button
               key={id}
               onClick={() => setPage(id)}
+              onMouseEnter={(e) => {
+                if (!active) {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                  e.currentTarget.style.color = 'rgba(255,255,255,0.7)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!active) {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = 'rgba(255,255,255,0.55)';
+                }
+              }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 7,
-                padding: '6px 14px',
-                background: active ? 'rgba(255,255,255,0.045)' : 'transparent',
+                gap: 9,
+                padding: '10px 18px',
+                background: active ? 'rgba(255,255,255,0.07)' : 'transparent',
                 border: 'none',
-                borderRadius: 4,
-                color: active ? '#e8e0d0' : 'rgba(255,255,255,0.32)',
+                borderRadius: 6,
+                color: active ? '#f3ecdc' : 'rgba(255,255,255,0.55)',
                 fontFamily: 'DM Sans, sans-serif',
-                fontSize: 12,
+                fontSize: 14,
+                fontWeight: active ? 600 : 500,
+                letterSpacing: 0.2,
                 cursor: 'pointer',
                 transition: 'all 0.15s',
                 position: 'relative',
               }}
             >
-              <span style={{ color: active ? accent : 'rgba(255,255,255,0.25)', display: 'inline-flex', transition: 'color 0.15s' }}>
+              <span style={{ color: active ? accent : 'rgba(255,255,255,0.45)', display: 'inline-flex', transition: 'color 0.15s' }}>
                 {icon}
               </span>
               {label}
@@ -137,12 +151,13 @@ export const AppHeader: React.FC<Props> = ({ page, setPage, prices, loading }) =
                 <div
                   style={{
                     position: 'absolute',
-                    bottom: -1,
+                    bottom: -2,
                     left: 14,
                     right: 14,
-                    height: 1,
+                    height: 2,
                     background: accent,
-                    borderRadius: 1,
+                    borderRadius: 2,
+                    boxShadow: `0 0 8px ${accent}66`,
                   }}
                 />
               )}

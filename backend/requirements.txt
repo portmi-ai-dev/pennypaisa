@@ -6,3 +6,8 @@ hiredis
 asyncpg
 google-genai
 httpx
+# curl_cffi impersonates a real browser's TLS fingerprint. Yahoo Finance
+# rate-limits stock httpx/requests with HTTP 429 ("Edge: Too Many Requests")
+# even with browser-like User-Agent headers. curl_cffi is the standard
+# workaround and is what yfinance uses under the hood.
+curl_cffi

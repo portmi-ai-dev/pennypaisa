@@ -8,6 +8,17 @@ from fastapi import APIRouter, Query, Request
 
 from app.models.prices import PricesResponse
 
+# Yahoo Finance fingerprints stock httpx/requests TLS and returns
+# "Edge: Too Many Requests" even on the first call. curl_cffi imitates a
+# real Chrome 120 TLS fingerprint, which Yahoo accepts. We use it ONLY for
+# Yahoo calls — everything else stays on the existing shared httpx client.
+try:
+    from curl_cffi.requests import AsyncSession as _CurlSession  # type: ignore
+    _HAS_CURL_CFFI = True
+except Exception:  # pragma: no cover - graceful degradation if dep missing
+    _CurlSession = None  # type: ignore[misc,assignment]
+    _HAS_CURL_CFFI = False
+
 router = APIRouter(prefix="/api", tags=["prices"])
 
 # Store baseline prices for weekly change
@@ -368,18 +379,34 @@ async def get_prices(request: Request) -> PricesResponse:
 
 
 def _valid_candles(candles: list[dict[str, Any]]) -> bool:
+    """Sanity-check a candle list before serving / caching it.
+
+    Old archival monthly bars from Yahoo (e.g. GC=F pre-2010) occasionally
+    have rounding quirks where `close` is fractionally above `high` or
+    `open` is fractionally below `low` — the data is still usable, the
+    extremes are just slightly off. We tolerate up to ~5% of bars
+    violating strict OHLC consistency rather than rejecting the whole
+    series, which is what was hiding the monthly Gold/Silver charts.
+    """
     if not candles:
         return False
     distinct_closes = {round(c.get("close", 0), 6) for c in candles}
     if len(distinct_closes) <= 1:
         return False
+
+    bad = 0
     for c in candles:
         o, h, l, cl = c.get("open"), c.get("high"), c.get("low"), c.get("close")
         if None in (o, h, l, cl):
             return False
-        if h < max(o, cl) or l > min(o, cl):
-            return False
-    return True
+        # Accept tiny float rounding noise (~0.05% of price)
+        tol = max(abs(h), abs(l), 1.0) * 5e-4
+        if h + tol < max(o, cl) or l - tol > min(o, cl):
+            bad += 1
+
+    # Reject only if > 5% of candles are inconsistent — a real bad payload
+    # tends to be inconsistent throughout, not in 4 out of 263 bars.
+    return bad / len(candles) <= 0.05
 
 
 def _from_yahoo(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -436,13 +463,31 @@ def _from_binance_klines(items: Any) -> list[dict[str, Any]]:
 
 
 async def _fetch_yahoo(client, symbol: str, interval: str) -> list[dict[str, Any]]:
+    """Fetch OHLC candles from Yahoo Finance.
+
+    Yahoo TLS-fingerprints stock httpx and returns 429 ("Edge: Too Many
+    Requests") on the very first call. We use curl_cffi (Chrome 120
+    impersonation) when available, and fall back to plain httpx if the
+    dependency is missing — the latter will probably 429, but at least
+    the endpoint won't crash.
+    """
     y_interval = YAHOO_INTERVAL.get(interval, "1d")
     y_range = YAHOO_RANGE.get(interval, "1y")
-    payload = await _safe_get_json(
-        client,
-        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={y_interval}&range={y_range}",
-        timeout=12.0,
-    )
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={y_interval}&range={y_range}"
+
+    if _HAS_CURL_CFFI and _CurlSession is not None:
+        try:
+            async with _CurlSession(impersonate="chrome120") as session:
+                response = await session.get(url, timeout=12)
+                if response.status_code != 200:
+                    return []
+                payload = response.json()
+            return _from_yahoo(payload)
+        except Exception as exc:
+            print(f"curl_cffi Yahoo fetch failed for {symbol} ({interval}): {exc}")
+            # fall through to httpx attempt below
+
+    payload = await _safe_get_json(client, url, timeout=12.0)
     return _from_yahoo(payload)
 
 
