@@ -1,42 +1,68 @@
 import * as React from 'react';
-import { useState, useRef, useMemo, useEffect, Suspense } from 'react';
+import { useState, useRef, useEffect, Suspense } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Environment, Float, OrbitControls, ContactShadows } from '@react-three/drei';
-import { GoogleGenAI, Type } from "@google/genai";
+import { Environment, OrbitControls, ContactShadows } from '@react-three/drei';
+import { GoogleGenAI, Type } from '@google/genai';
 import * as THREE from 'three';
 import { GoldBullion } from './components/GoldBullion';
 import { SilverBullion } from './components/SilverBullion';
 import { Tether } from './components/Tether';
 import { BitcoinCuboid } from './components/BitcoinCuboid';
-import { CandlestickChart } from './components/CandlestickChart';
-import { ArrowLeft, ArrowUp, ArrowDown, Activity } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { soundManager } from './lib/sounds';
-
 import { motion, AnimatePresence } from 'motion/react';
 
-function MarketSimulator({ isMerged, onNoiseUpdate }: { isMerged: boolean, onNoiseUpdate: (noise: number) => void }) {
-  // Removed the state update every frame to prevent unnecessary re-renders of the entire app.
-  // This helps stabilize the text and geometry rendering.
-  return null;
-}
+import { AppHeader, type PageId } from './components/AppHeader';
+import { IntelligencePage } from './components/IntelligencePage';
+import { ChatPage } from './components/ChatPage';
+import { ChartPage } from './components/ChartPage';
+import { type Prices, type AssetKey, type Sentiments, ASSET_CONFIG, visualTier } from './lib/marketData';
 
-function AnimatedBullion({ targetPos, children }: any) {
+// If the URL contains ?chart=<asset>, this tab is a dedicated full-screen
+// candlestick view. Resolved once at module load — the URL doesn't change
+// for the lifetime of the tab, so we don't need a hook for this.
+const CHART_TAB_ASSET: AssetKey | null = (() => {
+  if (typeof window === 'undefined') return null;
+  const param = new URLSearchParams(window.location.search).get('chart');
+  if (param === 'gold' || param === 'silver' || param === 'bitcoin') return param;
+  return null;
+})();
+
+function AnimatedBullion({ targetPos, children }: { targetPos: [number, number, number]; children: React.ReactNode }) {
   const ref = useRef<THREE.Group>(null);
-  
-  useFrame((state, delta) => {
+
+  useFrame((_state, delta) => {
     if (!ref.current) return;
     const targetVec = new THREE.Vector3(...targetPos);
     ref.current.position.lerp(targetVec, delta * 10);
   });
 
-  return (
-    <group ref={ref}>
-      {children}
-    </group>
-  );
+  return <group ref={ref}>{children}</group>;
+}
+
+// Standalone chart-tab wrapper — keeps hook order identical to the main App.
+function ChartTabApp({ asset }: { asset: AssetKey }) {
+  return <ChartPage asset={asset} />;
 }
 
 export default function App() {
+  // Standalone chart tab: detected at module load, so the early return is safe
+  // (no hooks are declared above this in the App component).
+  if (CHART_TAB_ASSET) {
+    return <ChartTabApp asset={CHART_TAB_ASSET} />;
+  }
+
+  // ── Page routing ──
+  const [page, setPage] = useState<PageId>(() => {
+    if (typeof window === 'undefined') return 'landing';
+    const stored = window.localStorage.getItem('gilver_page') as PageId | null;
+    return stored && ['landing', 'intelligence', 'chat'].includes(stored) ? stored : 'landing';
+  });
+  useEffect(() => {
+    window.localStorage.setItem('gilver_page', page);
+  }, [page]);
+
+  // ── Market data state (preserved from previous app) ──
   const [goldPrice, setGoldPrice] = useState(2150);
   const [silverPrice, setSilverPrice] = useState(25);
   const [goldChange, setGoldChange] = useState(0);
@@ -52,23 +78,18 @@ export default function App() {
   const [btcWeeklyChangePercent, setBtcWeeklyChangePercent] = useState(0);
   const [btcMarketCap, setBtcMarketCap] = useState(1280000000000);
   const [btcDominance, setBtcDominance] = useState(52.5);
-  const [volatility, setVolatility] = useState(50);
+  const [btcVolume24h, setBtcVolume24h] = useState('$35.2B');
+  const [btcVolumeChangePercent, setBtcVolumeChangePercent] = useState(0);
+
   const [isMerged, setIsMerged] = useState(false);
   const [morphedGold, setMorphedGold] = useState(false);
   const [morphedSilver, setMorphedSilver] = useState(false);
-  const [marketNoise, setMarketNoise] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [showBitcoin, setShowBitcoin] = useState(false);
   const [showBlockchain, setShowBlockchain] = useState(false);
-  const [btcVolume24h, setBtcVolume24h] = useState("$35.2B");
-  const [btcVolumeChangePercent, setBtcVolumeChangePercent] = useState(0);
-
-// Chart State
-  const [activeChart, setActiveChart] = useState<'gold' | 'silver' | 'btc' | null>(null);
-  const [chartData, setChartData] = useState<any[]>([]);
-  const [isChartLoading, setIsChartLoading] = useState(false);
-  const [isChartFallback, setIsChartFallback] = useState(false);
-  const [chartInterval, setChartInterval] = useState<'1m' | '5m' | '15m' | '1h' | '1d' | '1w' | '1mo'>('1d');
+  // Which bullion is currently being hovered — drives the floating Market
+  // Intelligence panel (spec: "Hovering on the Bullions show Market Intelligence").
+  const [hoveredAsset, setHoveredAsset] = useState<AssetKey | null>(null);
 
   const [marketSentiment, setMarketSentiment] = useState<{
     marketType: 'bull' | 'bear' | 'neutral';
@@ -77,22 +98,8 @@ export default function App() {
     solowayView: string;
     lastUpdated?: string;
   } | null>(null);
-
-  const [goldSentiment, setGoldSentiment] = useState<{
-    marketType: 'bull' | 'bear' | 'neutral';
-    reasoning: string;
-    cowenView: string;
-    solowayView: string;
-    lastUpdated?: string;
-  } | null>(null);
-
-  const [silverSentiment, setSilverSentiment] = useState<{
-    marketType: 'bull' | 'bear' | 'neutral';
-    reasoning: string;
-    cowenView: string;
-    solowayView: string;
-    lastUpdated?: string;
-  } | null>(null);
+  const [goldSentiment, setGoldSentiment] = useState<typeof marketSentiment>(null);
+  const [silverSentiment, setSilverSentiment] = useState<typeof marketSentiment>(null);
 
   const goldRef = useRef<THREE.Group>(null);
   const silverRef = useRef<THREE.Group>(null);
@@ -102,21 +109,17 @@ export default function App() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Removed the manual price drift interval to keep the base price accurate to the API.
-
-  // Fetch market sentiment using Gemini with Google Search
+  // ── Fetch market sentiment via Gemini (unchanged from prior version) ──
   useEffect(() => {
     const fetchSentiment = async () => {
       const STORAGE_KEY = 'market_sentiment_cache';
-      const CACHE_DURATION = 60 * 60 * 1000; // 1 hour
+      const CACHE_DURATION = 60 * 60 * 1000;
 
-      // Check cache first
       try {
         const cached = localStorage.getItem(STORAGE_KEY);
         if (cached) {
           const { timestamp, data } = JSON.parse(cached);
           if (Date.now() - timestamp < CACHE_DURATION) {
-            console.log("Using cached market sentiment");
             setMarketSentiment(data.crypto);
             setGoldSentiment(data.gold);
             setSilverSentiment(data.silver);
@@ -124,168 +127,80 @@ export default function App() {
           }
         }
       } catch (e) {
-        console.warn("Failed to read sentiment cache", e);
+        console.warn('Failed to read sentiment cache', e);
       }
 
       try {
         const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-          console.warn("Gemini API key not found. Using fallback sentiment.");
-          throw new Error("API Key missing");
-        }
+        if (!apiKey) throw new Error('API Key missing');
         const ai = new GoogleGenAI({ apiKey });
-        
-        // Helper to delay between requests
-        const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+        const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
-        // Fetch Crypto Sentiment
-        let cryptoData = null;
-        try {
-          const cryptoResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `Determine the absolute latest Bitcoin/Crypto market sentiment (Bull or Bear) as of today, ${new Date().toLocaleDateString()}, based on the most recent analysis, videos, and tweets from Benjamin Cowen and Gareth Soloway. 
-            Provide the answer in JSON format with the following fields:
-            - marketType: "bull" or "bear"
-            - reasoning: a very concise summary (MAX 30 WORDS)
-            - cowenView: latest stance from Benjamin Cowen (MAX 25 WORDS)
-            - solowayView: latest stance from Gareth Soloway (MAX 25 WORDS)`,
-            config: {
-              tools: [{ googleSearch: {} }],
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  marketType: { type: Type.STRING },
-                  reasoning: { type: Type.STRING },
-                  cowenView: { type: Type.STRING },
-                  solowayView: { type: Type.STRING }
+        const fetchOne = async (label: string, contents: string) => {
+          try {
+            const r = await ai.models.generateContent({
+              model: 'gemini-3-flash-preview',
+              contents,
+              config: {
+                tools: [{ googleSearch: {} }],
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    marketType: { type: Type.STRING },
+                    reasoning: { type: Type.STRING },
+                    cowenView: { type: Type.STRING },
+                    solowayView: { type: Type.STRING },
+                  },
+                  required: ['marketType', 'reasoning', 'cowenView', 'solowayView'],
                 },
-                required: ["marketType", "reasoning", "cowenView", "solowayView"]
-              }
+              },
+            });
+            if (r.text) {
+              return {
+                ...JSON.parse(r.text),
+                lastUpdated: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              };
             }
-          });
-
-          if (cryptoResponse.text) {
-            cryptoData = {
-              ...JSON.parse(cryptoResponse.text),
-              lastUpdated: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            };
-            setMarketSentiment(cryptoData);
+          } catch (e) {
+            console.warn(`${label} sentiment fetch failed:`, e);
           }
-        } catch (e) {
-          console.warn("Crypto sentiment fetch failed:", e);
-        }
+          return null;
+        };
 
-        await delay(2000); // Wait 2 seconds between requests to avoid burst limits
+        const today = new Date().toLocaleDateString();
+        const prompt = (asset: string) =>
+          `Determine the absolute latest ${asset} market sentiment (Bull or Bear) as of today, ${today}, based on the most recent analysis, videos, and tweets from Benjamin Cowen and Gareth Soloway. Provide JSON: marketType ("bull"|"bear"), reasoning (MAX 30 WORDS), cowenView (MAX 25 WORDS), solowayView (MAX 25 WORDS).`;
 
-        // Fetch Gold Sentiment
-        let goldData = null;
-        try {
-          const goldResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `Determine the absolute latest Gold (XAU) market sentiment (Bull or Bear) as of today, ${new Date().toLocaleDateString()}, based on the most recent analysis, videos, and tweets from Benjamin Cowen and Gareth Soloway. 
-            Provide the answer in JSON format with the following fields:
-            - marketType: "bull" or "bear"
-            - reasoning: a very concise summary (MAX 30 WORDS)
-            - cowenView: latest stance from Benjamin Cowen (MAX 25 WORDS)
-            - solowayView: latest stance from Gareth Soloway (MAX 25 WORDS)`,
-            config: {
-              tools: [{ googleSearch: {} }],
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  marketType: { type: Type.STRING },
-                  reasoning: { type: Type.STRING },
-                  cowenView: { type: Type.STRING },
-                  solowayView: { type: Type.STRING }
-                },
-                required: ["marketType", "reasoning", "cowenView", "solowayView"]
-              }
-            }
-          });
-
-          if (goldResponse.text) {
-            goldData = {
-              ...JSON.parse(goldResponse.text),
-              lastUpdated: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            };
-            setGoldSentiment(goldData);
-          }
-        } catch (e) {
-          console.warn("Gold sentiment fetch failed:", e);
-        }
-
+        const cryptoData = await fetchOne('Crypto', prompt('Bitcoin/Crypto'));
+        if (cryptoData) setMarketSentiment(cryptoData);
         await delay(2000);
+        const goldData = await fetchOne('Gold', prompt('Gold (XAU)'));
+        if (goldData) setGoldSentiment(goldData);
+        await delay(2000);
+        const silverData = await fetchOne('Silver', prompt('Silver (XAG)'));
+        if (silverData) setSilverSentiment(silverData);
 
-        // Fetch Silver Sentiment
-        let silverData = null;
-        try {
-          const silverResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `Determine the absolute latest Silver (XAG) market sentiment (Bull or Bear) as of today, ${new Date().toLocaleDateString()}, based on the most recent analysis, videos, and tweets from Benjamin Cowen and Gareth Soloway. 
-            Provide the answer in JSON format with the following fields:
-            - marketType: "bull" or "bear"
-            - reasoning: a very concise summary (MAX 30 WORDS)
-            - cowenView: latest stance from Benjamin Cowen (MAX 25 WORDS)
-            - solowayView: latest stance from Gareth Soloway (MAX 25 WORDS)`,
-            config: {
-              tools: [{ googleSearch: {} }],
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  marketType: { type: Type.STRING },
-                  reasoning: { type: Type.STRING },
-                  cowenView: { type: Type.STRING },
-                  solowayView: { type: Type.STRING }
-                },
-                required: ["marketType", "reasoning", "cowenView", "solowayView"]
-              }
-            }
-          });
-
-          if (silverResponse.text) {
-            silverData = {
-              ...JSON.parse(silverResponse.text),
-              lastUpdated: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            };
-            setSilverSentiment(silverData);
-          }
-        } catch (e) {
-          console.warn("Silver sentiment fetch failed:", e);
-        }
-
-        // Cache the successful results
         if (cryptoData || goldData || silverData) {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify({
-            timestamp: Date.now(),
-            data: {
-              crypto: cryptoData || marketSentiment,
-              gold: goldData || goldSentiment,
-              silver: silverData || silverSentiment
-            }
-          }));
+          localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({
+              timestamp: Date.now(),
+              data: {
+                crypto: cryptoData || marketSentiment,
+                gold: goldData || goldSentiment,
+                silver: silverData || silverSentiment,
+              },
+            }),
+          );
         }
-
       } catch (error) {
-        console.error("Error fetching sentiment:", error);
-        
-        // Final fallback logic
-        const cached = localStorage.getItem(STORAGE_KEY);
-        if (cached) {
-          const { data } = JSON.parse(cached);
-          setMarketSentiment(data.crypto);
-          setGoldSentiment(data.gold);
-          setSilverSentiment(data.silver);
-          return;
-        }
-
+        console.error('Error fetching sentiment:', error);
         const fallback = {
           marketType: 'bull' as const,
           reasoning: 'Market showing strong resilience above key support levels.',
           cowenView: 'Watching the bull market support band closely.',
-          solowayView: 'Technical breakout confirmed on the weekly chart.'
+          solowayView: 'Technical breakout confirmed on the weekly chart.',
         };
         setMarketSentiment(fallback);
         setGoldSentiment(fallback);
@@ -296,21 +211,14 @@ export default function App() {
     fetchSentiment();
   }, []);
 
-  // Fetch real-time prices from our Yahoo Finance proxy
-  React.useEffect(() => {
+  // ── Fetch real-time prices from backend ──
+  useEffect(() => {
     const fetchPrices = async () => {
       try {
         const response = await fetch('/api/prices');
-        
-        // Check if the response is actually JSON to prevent parsing errors on 502/HTML pages
-        const contentType = response.headers.get("content-type");
-        if (!contentType || !contentType.includes("application/json")) {
-          console.warn("Received non-JSON response from server (likely a temporary proxy error during restart). Retrying next cycle.");
-          return; // Exit early without throwing
-        }
-
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) return;
         const data = await response.json();
-        
         if (data && data.gold && data.silver) {
           setGoldPrice(data.gold);
           setSilverPrice(data.silver);
@@ -335,385 +243,639 @@ export default function App() {
           if (data.btcWeeklyChangePercent !== undefined) setBtcWeeklyChangePercent(data.btcWeeklyChangePercent);
           if (data.isWeekend !== undefined) setIsWeekend(data.isWeekend);
         }
-        
-        if (data.error) {
-          console.warn('Price API returned an error (using fallback):', data.error);
-        }
       } catch (error) {
-        console.warn('Temporary network error fetching market prices. Retrying next cycle.');
+        console.warn('Temporary network error fetching market prices.');
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchPrices();
-    const interval = setInterval(fetchPrices, 60000); // Refresh every minute
+    const interval = setInterval(fetchPrices, 60000);
     return () => clearInterval(interval);
   }, []);
 
-  const displayGoldPrice = goldPrice;
-  const displaySilverPrice = silverPrice;
-
-  const ratio = displayGoldPrice / (displaySilverPrice || 0.1);
+  // ── Derived ──
+  const ratio = goldPrice / (silverPrice || 0.1);
   const totalRatio = ratio + 1;
   const goldWeight = ratio / totalRatio;
   const silverWeight = 1 / totalRatio;
-
-  // Base width of a bullion bar is 10
   const totalWidth = 10;
   const goldTargetWidth = isMerged ? totalWidth * goldWeight : 10;
   const silverTargetWidth = isMerged ? totalWidth * silverWeight : 10;
-
-  const goldTargetPos: [number, number, number] = isMerged 
-    ? [-(totalWidth / 2) + (goldTargetWidth / 2), -6, 0] 
+  const goldTargetPos: [number, number, number] = isMerged
+    ? [-(totalWidth / 2) + goldTargetWidth / 2, -6, 0]
     : [-6.5, -6, 0];
-    
-  const silverTargetPos: [number, number, number] = isMerged 
-    ? [(totalWidth / 2) - (silverTargetWidth / 2), -6, 0] 
+  const silverTargetPos: [number, number, number] = isMerged
+    ? [totalWidth / 2 - silverTargetWidth / 2, -6, 0]
     : [6.5, -6, 0];
-
-  const handleMorphGold = () => setMorphedGold(!morphedGold);
-  const handleMorphSilver = () => setMorphedSilver(!morphedSilver);
-
-  const buildFallbackHistory = (price: number) => {
-    const now = Date.now();
-    return Array.from({ length: 30 }).map((_, index) => {
-      const time = now - (29 - index) * 24 * 60 * 60 * 1000;
-      const open = price * (1 + 0.01 * Math.sin(index / 2.3));
-      const close = price * (1 + 0.01 * Math.sin(index / 2.3 + 1.4));
-      const wick = price * (0.005 + 0.007 * Math.abs(Math.sin(index / 1.7 + 0.5)));
-      const high = Math.max(open, close) + wick;
-      const low = Math.min(open, close) - wick;
-      return {
-        time: Math.floor(time / 1000),
-        open,
-        high,
-        low,
-        close,
-      };
-    });
-  };
-
-  const loadHistory = async (
-    asset: 'gold' | 'silver' | 'btc',
-    interval: string,
-    isInitial: boolean
-  ) => {
-    if (isInitial) setIsChartLoading(true);
-    try {
-      const response = await fetch(`/api/history/${asset}?interval=${interval}`);
-      const data = await response.json();
-      if (Array.isArray(data) && data.length > 0 && data[0].open !== undefined) {
-        setChartData(data);
-        setIsChartFallback(false);
-      } else {
-        const price = asset === 'gold' ? goldPrice : asset === 'silver' ? silverPrice : btcPrice;
-        setChartData(buildFallbackHistory(price));
-        setIsChartFallback(true);
-      }
-    } catch (error) {
-      console.warn('Failed to fetch history:', error);
-      if (isInitial) {
-        const price = asset === 'gold' ? goldPrice : asset === 'silver' ? silverPrice : btcPrice;
-        setChartData(buildFallbackHistory(price));
-        setIsChartFallback(true);
-      }
-    } finally {
-      if (isInitial) setIsChartLoading(false);
-    }
-  };
-
-  const fetchHistory = (asset: 'gold' | 'silver' | 'btc') => {
-    setActiveChart(asset);
-    setChartData([]);
-    setIsChartFallback(false);
-    loadHistory(asset, chartInterval, true);
-  };
-
-  // Real-time polling: refresh candles while the chart is open.
-  useEffect(() => {
-    if (!activeChart) return;
-    loadHistory(activeChart, chartInterval, chartData.length === 0);
-    const refreshMs = chartInterval === '1m' ? 15000
-      : chartInterval === '5m' ? 30000
-      : chartInterval === '15m' ? 60000
-      : chartInterval === '1h' ? 120000
-      : chartInterval === '1d' ? 300000
-      : chartInterval === '1w' ? 600000
-      : 1800000;
-    const id = setInterval(() => {
-      loadHistory(activeChart, chartInterval, false);
-    }, refreshMs);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeChart, chartInterval]);
 
   const isAnyMorphed = morphedGold || morphedSilver;
 
+  // ── Shared prices object for header / pages ──
+  const prices: Prices | null =
+    goldPrice && silverPrice && btcPrice
+      ? {
+          gold: {
+            price: goldPrice,
+            changePercent24h: goldChangePercent,
+            weeklyChangePercent: goldWeeklyChangePercent,
+          },
+          silver: {
+            price: silverPrice,
+            changePercent24h: silverChangePercent,
+            weeklyChangePercent: silverWeeklyChangePercent,
+          },
+          bitcoin: {
+            price: btcPrice,
+            changePercent24h: btcChangePercent,
+            weeklyChangePercent: btcWeeklyChangePercent,
+            marketCap: btcMarketCap,
+            dominance: btcDominance,
+          },
+          goldSilverRatio: ratio,
+          isWeekend,
+        }
+      : null;
+
   return (
-    <div className="w-full h-screen bg-[#050505] overflow-hidden relative">
-      <div className="absolute inset-0 z-0">
-        <Canvas
-          shadows
-          camera={{ position: [0, 2, 18], fov: 45 }}
-          gl={{ 
-            antialias: true, 
-            toneMapping: 3,
-            localClippingEnabled: true 
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100vh', background: '#06060e', overflow: 'hidden' }}>
+      <AppHeader page={page} setPage={setPage} prices={prices} loading={isLoading} />
+
+      <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        {/* Landing — Three.js scene stays mounted to preserve WebGL context */}
+        <div
+          style={{
+            display: page === 'landing' ? 'block' : 'none',
+            width: '100%',
+            height: '100%',
+            position: 'relative',
           }}
         >
-          <OrbitControls 
-            makeDefault 
-            enablePan={false}
-            target={[0, -4, 0]}
-            minPolarAngle={Math.PI / 4}
-            maxPolarAngle={Math.PI / 1.5}
-            minAzimuthAngle={-Math.PI / 2}
-            maxAzimuthAngle={Math.PI / 2}
-            minDistance={10}
-            maxDistance={25}
-          />
-          
-          <group position={[0, 0, 0]}>
-            <MarketSimulator isMerged={isMerged} onNoiseUpdate={setMarketNoise} />
-            <Suspense fallback={null}>
-              {/* Gold Bullion Container */}
-              <AnimatedBullion
-                targetPos={morphedGold ? [-7, -4, 0] : goldTargetPos}
-              >
-                <GoldBullion 
-                  ref={goldRef}
-                  otherBullionRef={silverRef}
-                  price={100} 
-                  basePrice={goldPrice}
-                  changePercent={goldChangePercent}
-                  weeklyChangePercent={goldWeeklyChangePercent}
-                  width={goldTargetWidth}
-                  isMerged={isMerged} 
-                  isMorphed={morphedGold} 
-                  isWeekend={isWeekend}
-                  onPointerOver={() => !morphedGold && (document.body.style.cursor = 'pointer')}
-                  onPointerOut={() => (document.body.style.cursor = 'auto')}
-                  onClick={() => {
-                    console.log('Gold handleMorph triggered');
-                    handleMorphGold();
-                  }}
-                  marketSentiment={goldSentiment}
-                />
-              </AnimatedBullion>
-
-              {/* Silver Bullion Container */}
-              <AnimatedBullion
-                targetPos={morphedSilver ? [7, -4, 0] : silverTargetPos}
-              >
-                <SilverBullion 
-                  ref={silverRef}
-                  otherBullionRef={goldRef}
-                  price={100} 
-                  basePrice={silverPrice}
-                  changePercent={silverChangePercent}
-                  weeklyChangePercent={silverWeeklyChangePercent}
-                  width={silverTargetWidth}
-                  isMerged={isMerged} 
-                  isMorphed={morphedSilver} 
-                  isWeekend={isWeekend}
-                  onPointerOver={() => !morphedSilver && (document.body.style.cursor = 'pointer')}
-                  onPointerOut={() => (document.body.style.cursor = 'auto')}
-                  onClick={() => {
-                    console.log('Silver handleMorph triggered');
-                    handleMorphSilver();
-                  }}
-                  marketSentiment={silverSentiment}
-                />
-              </AnimatedBullion>
-
-              <Tether 
-                startRef={goldRef} 
-                endRef={silverRef} 
-                visible={!isMerged && !morphedGold && !morphedSilver} 
-                onClick={() => setShowBitcoin(!showBitcoin)}
+          <div className="absolute inset-0 z-0">
+            <Canvas
+              shadows
+              camera={{ position: [0, 2, 18], fov: 45 }}
+              gl={{ antialias: true, toneMapping: 3, localClippingEnabled: true }}
+            >
+              <OrbitControls
+                makeDefault
+                enablePan={false}
+                target={[0, -4, 0]}
+                minPolarAngle={Math.PI / 4}
+                maxPolarAngle={Math.PI / 1.5}
+                minAzimuthAngle={-Math.PI / 2}
+                maxAzimuthAngle={Math.PI / 2}
+                minDistance={10}
+                maxDistance={25}
               />
 
-              <Suspense fallback={null}>
-                <BitcoinCuboid 
-                  visible={showBitcoin && !isMerged && !morphedGold && !morphedSilver} 
-                  price={btcPrice}
-                  changePercent={btcChangePercent}
-                  weeklyChangePercent={btcWeeklyChangePercent}
-                  onClick={() => setShowBlockchain(!showBlockchain)}
-                  isBlockchainExpanded={showBlockchain}
-                  marketCap={btcMarketCap}
-                  dominance={btcDominance}
-                  volume24h={btcVolume24h}
-                  volumeChangePercent={btcVolumeChangePercent}
-                  marketSentiment={marketSentiment}
-                />
-              </Suspense>
-            </Suspense>
-          </group>
+              <group position={[0, 0, 0]}>
+                <Suspense fallback={null}>
+                  <AnimatedBullion targetPos={morphedGold ? [-7, -4, 0] : goldTargetPos}>
+                    <GoldBullion
+                      ref={goldRef}
+                      otherBullionRef={silverRef}
+                      price={100}
+                      basePrice={goldPrice}
+                      changePercent={goldChangePercent}
+                      weeklyChangePercent={goldWeeklyChangePercent}
+                      width={goldTargetWidth}
+                      isMerged={isMerged}
+                      isMorphed={morphedGold}
+                      isWeekend={isWeekend}
+                      onPointerOver={() => {
+                        if (!morphedGold) document.body.style.cursor = 'pointer';
+                        setHoveredAsset('gold');
+                      }}
+                      onPointerOut={() => {
+                        document.body.style.cursor = 'auto';
+                        setHoveredAsset((cur) => (cur === 'gold' ? null : cur));
+                      }}
+                      onClick={() => setMorphedGold(!morphedGold)}
+                      marketSentiment={goldSentiment}
+                    />
+                  </AnimatedBullion>
 
-          <Environment preset="studio" />
-          <ContactShadows
-            position={[0, -8.5, 0]}
-            opacity={0.4}
-            scale={20}
-            blur={2}
-            far={4.5}
+                  <AnimatedBullion targetPos={morphedSilver ? [7, -4, 0] : silverTargetPos}>
+                    <SilverBullion
+                      ref={silverRef}
+                      otherBullionRef={goldRef}
+                      price={100}
+                      basePrice={silverPrice}
+                      changePercent={silverChangePercent}
+                      weeklyChangePercent={silverWeeklyChangePercent}
+                      width={silverTargetWidth}
+                      isMerged={isMerged}
+                      isMorphed={morphedSilver}
+                      isWeekend={isWeekend}
+                      onPointerOver={() => {
+                        if (!morphedSilver) document.body.style.cursor = 'pointer';
+                        setHoveredAsset('silver');
+                      }}
+                      onPointerOut={() => {
+                        document.body.style.cursor = 'auto';
+                        setHoveredAsset((cur) => (cur === 'silver' ? null : cur));
+                      }}
+                      onClick={() => setMorphedSilver(!morphedSilver)}
+                      marketSentiment={silverSentiment}
+                    />
+                  </AnimatedBullion>
+
+                  <Tether
+                    startRef={goldRef}
+                    endRef={silverRef}
+                    visible={!isMerged && !morphedGold && !morphedSilver}
+                    onClick={() => setShowBitcoin(!showBitcoin)}
+                  />
+
+                  <Suspense fallback={null}>
+                    <BitcoinCuboid
+                      visible={showBitcoin && !isMerged && !morphedGold && !morphedSilver}
+                      price={btcPrice}
+                      changePercent={btcChangePercent}
+                      weeklyChangePercent={btcWeeklyChangePercent}
+                      onClick={() => setShowBlockchain(!showBlockchain)}
+                      isBlockchainExpanded={showBlockchain}
+                      marketCap={btcMarketCap}
+                      dominance={btcDominance}
+                      volume24h={btcVolume24h}
+                      volumeChangePercent={btcVolumeChangePercent}
+                      marketSentiment={marketSentiment}
+                    />
+                  </Suspense>
+                </Suspense>
+              </group>
+
+              <Environment preset="studio" />
+              <ContactShadows position={[0, -8.5, 0]} opacity={0.4} scale={20} blur={2} far={4.5} />
+              <ambientLight intensity={0.8} />
+              <hemisphereLight intensity={0.8} groundColor="#333333" color="#ffffff" />
+              <directionalLight position={[10, 10, 10]} intensity={1.2} castShadow />
+              <directionalLight position={[-10, 10, 10]} intensity={1.2} />
+              <directionalLight position={[0, -10, 5]} intensity={1.5} />
+              <directionalLight position={[-10, -5, 5]} intensity={1.2} />
+              <pointLight position={[0, 0, 15]} intensity={1.5} />
+              <pointLight position={[-15, 0, 5]} intensity={0.8} />
+              <pointLight position={[15, 0, 5]} intensity={0.8} />
+            </Canvas>
+          </div>
+
+          {/* Atmospheric halos behind the canvas (matches Gilver design) */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              zIndex: 1,
+              background: `
+                radial-gradient(ellipse 55% 45% at 28% 62%, rgba(212,168,67,0.045) 0%, transparent 65%),
+                radial-gradient(ellipse 55% 45% at 72% 62%, rgba(140,180,210,0.04) 0%, transparent 65%)
+              `,
+            }}
           />
-          
-          <ambientLight intensity={0.8} />
-          <hemisphereLight intensity={0.8} groundColor="#333333" color="#ffffff" />
-          <directionalLight position={[10, 10, 10]} intensity={1.2} castShadow />
-          <directionalLight position={[-10, 10, 10]} intensity={1.2} />
-          <directionalLight position={[0, -10, 5]} intensity={1.5} />
-          <directionalLight position={[-10, -5, 5]} intensity={1.2} />
-          <pointLight position={[0, 0, 15]} intensity={1.5} />
-          <pointLight position={[-15, 0, 5]} intensity={0.8} />
-          <pointLight position={[15, 0, 5]} intensity={0.8} />
-        </Canvas>
-      </div>
+          {/* Vignette */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              zIndex: 2,
+              background:
+                'radial-gradient(ellipse 90% 85% at 50% 50%, transparent 40%, rgba(3,3,10,0.65) 100%)',
+            }}
+          />
 
-      {/* Loading Overlay */}
-      <div className={`absolute inset-0 z-[200] bg-black flex flex-col items-center justify-center transition-opacity duration-1000 pointer-events-none ${isLoading ? 'opacity-100' : 'opacity-0'}`}>
-        <div className="flex flex-col items-center gap-8">
-          <div className="w-24 h-24 border-t-2 border-white/20 rounded-full animate-spin relative">
-            <div className="absolute inset-0 border-t-2 border-white rounded-full animate-[spin_1.5s_linear_infinite]" />
+          {/* Loading Overlay */}
+          <div
+            className={`absolute inset-0 z-[200] bg-black flex flex-col items-center justify-center transition-opacity duration-1000 pointer-events-none ${
+              isLoading ? 'opacity-100' : 'opacity-0'
+            }`}
+          >
+            <div className="flex flex-col items-center gap-8">
+              <div className="w-24 h-24 border-t-2 border-white/20 rounded-full animate-spin relative">
+                <div className="absolute inset-0 border-t-2 border-white rounded-full animate-[spin_1.5s_linear_infinite]" />
+              </div>
+              <div className="flex flex-col items-center gap-2">
+                <h3
+                  className="text-white text-xs uppercase animate-pulse"
+                  style={{ letterSpacing: '0.8em', fontFamily: 'DM Sans, sans-serif' }}
+                >
+                  Synchronizing
+                </h3>
+                <p
+                  className="text-white/30 text-[9px] uppercase"
+                  style={{ letterSpacing: '0.4em', fontFamily: 'DM Sans, sans-serif' }}
+                >
+                  Global Market Feed
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="flex flex-col items-center gap-2">
-            <h3 className="text-white text-xs tracking-[0.8em] uppercase font-mono animate-pulse">Synchronizing</h3>
-            <p className="text-white/30 text-[9px] tracking-[0.4em] uppercase font-mono">Global Market Feed</p>
+
+          {/* Ratio Display (visible only when merged) */}
+          <div
+            className={`absolute z-10 text-right transition-all duration-1000 ${
+              isMerged && !isAnyMorphed ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-10'
+            }`}
+            style={{ top: 32, right: 48 }}
+          >
+            <h2
+              className="uppercase mb-2"
+              style={{ fontSize: 11, letterSpacing: '0.4em', color: 'rgba(255,255,255,0.4)', fontFamily: 'DM Sans, sans-serif' }}
+            >
+              Gold:Silver Ratio
+            </h2>
+            <div className="flex items-baseline justify-end gap-2">
+              <span
+                style={{
+                  fontFamily: 'Cormorant Garamond, serif',
+                  fontSize: 80,
+                  fontWeight: 300,
+                  color: '#e8e0d0',
+                  fontStyle: 'italic',
+                  lineHeight: 1,
+                }}
+              >
+                {ratio.toFixed(1)}
+              </span>
+              <span
+                style={{
+                  fontSize: 22,
+                  fontWeight: 300,
+                  color: 'rgba(255,255,255,0.2)',
+                  letterSpacing: 4,
+                  fontFamily: 'DM Sans, sans-serif',
+                }}
+              >
+                :1
+              </span>
+            </div>
+            <div className="ml-auto mt-4" style={{ height: 1, width: 128, background: 'rgba(255,255,255,0.1)' }} />
+          </div>
+
+          {/* Hover-driven Market Intelligence overlay (spec: hovering on bullions
+              surfaces market intelligence — trend, analyst views) */}
+          <AnimatePresence>
+            {hoveredAsset && !isAnyMorphed && (() => {
+              const sent =
+                hoveredAsset === 'gold'
+                  ? goldSentiment
+                  : hoveredAsset === 'silver'
+                  ? silverSentiment
+                  : marketSentiment;
+              const cfg = ASSET_CONFIG[hoveredAsset];
+              const p = prices?.[hoveredAsset];
+              const tier = visualTier(hoveredAsset, p?.weeklyChangePercent);
+              const sideStyle: React.CSSProperties =
+                hoveredAsset === 'silver'
+                  ? { right: 32 }
+                  : hoveredAsset === 'gold'
+                  ? { left: 32 }
+                  : { left: '50%', transform: 'translateX(-50%)' };
+              return (
+                <motion.div
+                  key={`intel-${hoveredAsset}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 12 }}
+                  transition={{ duration: 0.2 }}
+                  style={{
+                    position: 'absolute',
+                    top: 110,
+                    width: 320,
+                    padding: 18,
+                    background: 'rgba(6,6,14,0.78)',
+                    border: `1px solid ${cfg.colorBorder}`,
+                    borderRadius: 6,
+                    backdropFilter: 'blur(20px)',
+                    WebkitBackdropFilter: 'blur(20px)',
+                    boxShadow: `0 8px 28px rgba(0,0,0,0.5), 0 0 32px ${cfg.colorDim}`,
+                    zIndex: 50,
+                    pointerEvents: 'none',
+                    fontFamily: 'DM Sans, sans-serif',
+                    color: '#e8e0d0',
+                    ...sideStyle,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 9, letterSpacing: 2.4, textTransform: 'uppercase', color: cfg.color, marginBottom: 4 }}>
+                        {cfg.sym} · Market Intelligence
+                      </div>
+                      <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 22, fontWeight: 400, lineHeight: 1 }}>
+                        {cfg.name}
+                        <span style={{ color: 'rgba(255,255,255,0.32)', fontSize: 13, marginLeft: 8, fontStyle: 'italic' }}>
+                          {cfg.tagline}
+                        </span>
+                      </div>
+                    </div>
+                    {sent?.marketType && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          letterSpacing: 2,
+                          textTransform: 'uppercase',
+                          padding: '3px 8px',
+                          borderRadius: 3,
+                          background:
+                            sent.marketType === 'bull'
+                              ? 'rgba(76,175,80,0.14)'
+                              : sent.marketType === 'bear'
+                              ? 'rgba(239,83,80,0.14)'
+                              : 'rgba(255,255,255,0.08)',
+                          color:
+                            sent.marketType === 'bull'
+                              ? '#7fc983'
+                              : sent.marketType === 'bear'
+                              ? '#ef8a87'
+                              : 'rgba(255,255,255,0.5)',
+                        }}
+                      >
+                        {sent.marketType}
+                      </span>
+                    )}
+                  </div>
+
+                  {sent?.reasoning ? (
+                    <p style={{ fontSize: 12, lineHeight: 1.5, color: 'rgba(232,224,208,0.78)', margin: '0 0 12px' }}>
+                      {sent.reasoning}
+                    </p>
+                  ) : (
+                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.32)', margin: '0 0 12px', fontStyle: 'italic' }}>
+                      Synthesizing analyst consensus…
+                    </p>
+                  )}
+
+                  {(sent?.cowenView || sent?.solowayView) && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                      {sent.cowenView && (
+                        <div style={{ borderLeft: `2px solid ${cfg.color}`, paddingLeft: 8 }}>
+                          <div style={{ fontSize: 8, letterSpacing: 2, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>
+                            Cowen
+                          </div>
+                          <div style={{ fontSize: 11, color: 'rgba(232,224,208,0.85)', lineHeight: 1.45 }}>{sent.cowenView}</div>
+                        </div>
+                      )}
+                      {sent.solowayView && (
+                        <div style={{ borderLeft: `2px solid ${cfg.color}`, paddingLeft: 8 }}>
+                          <div style={{ fontSize: 8, letterSpacing: 2, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>
+                            Soloway
+                          </div>
+                          <div style={{ fontSize: 11, color: 'rgba(232,224,208,0.85)', lineHeight: 1.45 }}>{sent.solowayView}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingTop: 10,
+                      borderTop: '1px solid rgba(255,255,255,0.06)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span style={{ fontSize: 8, letterSpacing: 2, color: 'rgba(255,255,255,0.32)', textTransform: 'uppercase' }}>
+                        Weekly state
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color:
+                            tier.tone === 'positive'
+                              ? '#7fc983'
+                              : tier.tone === 'negative'
+                              ? '#ef8a87'
+                              : 'rgba(255,255,255,0.5)',
+                        }}
+                      >
+                        {tier.label}
+                      </span>
+                    </div>
+                    {p && (
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 14, color: '#e8e0d0' }}>
+                          {hoveredAsset === 'bitcoin'
+                            ? `$${p.price.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                            : `$${p.price.toFixed(2)}`}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: p.changePercent24h >= 0 ? '#7fc983' : '#ef8a87',
+                          }}
+                        >
+                          {p.changePercent24h >= 0 ? '+' : ''}
+                          {p.changePercent24h.toFixed(2)}% · 24h
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              );
+            })()}
+          </AnimatePresence>
+
+          {/* Weekly visual-state strip — bottom-center, shows the spec's percentage-led
+              tiers (charged / super-charged / aura, cracks / melt / fissures) for each
+              bullion based on weekly change. */}
+          {!isAnyMorphed && prices && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: 28,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 15,
+                display: 'flex',
+                gap: 14,
+                fontFamily: 'DM Sans, sans-serif',
+                pointerEvents: 'none',
+              }}
+            >
+              {(['gold', 'silver', ...(showBitcoin ? (['bitcoin'] as const) : [])] as AssetKey[]).map((a) => {
+                const cfg = ASSET_CONFIG[a];
+                const tier = visualTier(a, prices[a]?.weeklyChangePercent);
+                const dotColor =
+                  tier.tone === 'positive' ? cfg.color : tier.tone === 'negative' ? '#ef5350' : 'rgba(255,255,255,0.3)';
+                return (
+                  <div
+                    key={a}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '6px 12px',
+                      background: 'rgba(5,5,12,0.65)',
+                      border: `1px solid ${cfg.colorBorder}`,
+                      borderRadius: 999,
+                      backdropFilter: 'blur(14px)',
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        background: dotColor,
+                        boxShadow: tier.intensity > 0 ? `0 0 ${4 + tier.intensity * 3}px ${dotColor}` : 'none',
+                      }}
+                    />
+                    <span style={{ fontSize: 9, letterSpacing: 2, color: cfg.color, textTransform: 'uppercase' }}>
+                      {cfg.sym}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color:
+                          tier.tone === 'positive'
+                            ? '#7fc983'
+                            : tier.tone === 'negative'
+                            ? '#ef8a87'
+                            : 'rgba(255,255,255,0.5)',
+                      }}
+                    >
+                      {tier.label}
+                    </span>
+                    {prices[a]?.weeklyChangePercent !== undefined && (
+                      <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.32)' }}>
+                        {prices[a]!.weeklyChangePercent! >= 0 ? '+' : ''}
+                        {prices[a]!.weeklyChangePercent!.toFixed(2)}% wk
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Back arrows for morphed assets */}
+          <AnimatePresence>
+            {morphedGold && (
+              <motion.button
+                key="close-gold-chart"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                onClick={() => setMorphedGold(false)}
+                className="fixed z-[300] flex items-center justify-center w-12 h-12 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-white backdrop-blur-xl pointer-events-auto cursor-pointer group transition-colors"
+                style={{ top: 78, left: 32 }}
+              >
+                <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
+              </motion.button>
+            )}
+            {morphedSilver && (
+              <motion.button
+                key="close-silver-chart"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                onClick={() => setMorphedSilver(false)}
+                className="fixed z-[300] flex items-center justify-center w-12 h-12 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-white backdrop-blur-xl pointer-events-auto cursor-pointer group transition-colors"
+                style={{ top: 78, left: 32 }}
+              >
+                <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
+              </motion.button>
+            )}
+          </AnimatePresence>
+
+          {/* Au:Ag Ratio button (bottom-left) — Gilver style */}
+          <div
+            className={`absolute z-20 transition-opacity duration-500 ${isAnyMorphed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+            style={{ bottom: 28, left: 28 }}
+          >
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => {
+                soundManager.playHeavyCollision();
+                setIsMerged(!isMerged);
+              }}
+              style={{
+                background: isMerged ? '#e8e0d0' : 'rgba(5,5,12,0.8)',
+                border: `1px solid ${isMerged ? '#e8e0d0' : 'rgba(255,255,255,0.09)'}`,
+                borderRadius: 4,
+                padding: '10px 20px',
+                color: isMerged ? '#06060e' : 'rgba(255,255,255,0.6)',
+                fontFamily: 'DM Sans, sans-serif',
+                fontSize: 10,
+                letterSpacing: 2,
+                textTransform: 'uppercase',
+                cursor: 'pointer',
+                backdropFilter: 'blur(16px)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <span style={{ color: isMerged ? '#a07b1e' : '#d4a843', fontSize: 12 }}>Au</span>
+              <span style={{ opacity: 0.5 }}>:</span>
+              <span style={{ color: isMerged ? '#5b6b78' : '#90a8bc', fontSize: 12 }}>Ag</span>
+              {prices?.goldSilverRatio && (
+                <span style={{ marginLeft: 6, color: isMerged ? '#06060e' : 'rgba(255,255,255,0.5)' }}>
+                  {prices.goldSilverRatio.toFixed(1)}×
+                </span>
+              )}
+              <span style={{ marginLeft: 10, opacity: 0.5 }}>{isMerged ? 'Deconstruct' : 'Merge'}</span>
+            </motion.button>
+          </div>
+
+          {/* Subtle right hint */}
+          <div
+            className={`absolute z-10 transition-opacity duration-500 ${isAnyMorphed ? 'opacity-0' : 'opacity-100'}`}
+            style={{
+              bottom: 36,
+              right: 32,
+              fontFamily: 'DM Sans, sans-serif',
+              fontSize: 9,
+              letterSpacing: 2.5,
+              color: 'rgba(255,255,255,0.16)',
+              textTransform: 'uppercase',
+              pointerEvents: 'none',
+            }}
+          >
+            Hover · Click · Explore
           </div>
         </div>
-      </div>
 
-      {/* Removed top-left header text */}
-
-      {/* Ratio Display */}
-      <div className={`absolute top-12 right-12 z-10 text-right transition-all duration-1000 ${isMerged && !isAnyMorphed ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-10'}`}>
-        <h2 className="text-xs tracking-[0.4em] text-white/40 uppercase font-mono mb-2">Gold:Silver Ratio</h2>
-        <div className="flex items-baseline justify-end gap-2">
-          <span className="text-7xl font-black text-white font-mono tracking-tighter italic">
-            {ratio.toFixed(1)}
-          </span>
-          <span className="text-2xl font-light text-white/20 font-mono tracking-widest">:1</span>
-        </div>
-        <div className="h-px w-32 bg-white/10 ml-auto mt-4" />
-      </div>
-
-      {/* Global Close Buttons for Morphed Assets */}
-      <AnimatePresence>
-        {morphedGold && (
-          <motion.button
-            key="close-gold-chart"
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            onClick={() => setMorphedGold(false)}
-            className="fixed top-8 left-8 z-[300] flex items-center justify-center w-12 h-12 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-white backdrop-blur-xl pointer-events-auto cursor-pointer group transition-colors"
-          >
-            <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
-          </motion.button>
-        )}
-
-        {morphedSilver && (
-          <motion.button
-            key="close-silver-chart"
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            onClick={() => setMorphedSilver(false)}
-            className="fixed top-8 left-8 z-[300] flex items-center justify-center w-12 h-12 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-white backdrop-blur-xl pointer-events-auto cursor-pointer group transition-colors"
-          >
-            <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
-          </motion.button>
-        )}
-      </AnimatePresence>
-
-      <CandlestickChart
-        isVisible={!!activeChart}
-        data={chartData}
-        title={activeChart === 'gold' ? 'Gold Spot / USD' : activeChart === 'silver' ? 'Silver Spot / USD' : 'Bitcoin / USD'}
-        color={activeChart === 'gold' ? '#FFD700' : activeChart === 'silver' ? '#C0C0C0' : '#f7931a'}
-        isFallback={isChartFallback}
-        isLoading={isChartLoading}
-        interval={chartInterval}
-        onIntervalChange={setChartInterval}
-        onClose={() => setActiveChart(null)}
-      />
-
-      {/* Merge Button - Bottom Left */}
-      <div className={`absolute bottom-12 left-12 z-20 transition-opacity duration-500 ${isAnyMorphed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={() => {
-            soundManager.playHeavyCollision();
-            setIsMerged(!isMerged);
+        {/* Intelligence */}
+        <div
+          style={{
+            display: page === 'intelligence' ? 'block' : 'none',
+            width: '100%',
+            height: '100%',
+            position: 'absolute',
+            inset: 0,
           }}
-          className={`w-72 py-5 rounded-full border transition-all duration-700 font-mono tracking-[0.3em] uppercase text-[10px] shadow-2xl backdrop-blur-xl ${
-            isMerged 
-              ? 'bg-white text-black border-white' 
-              : 'bg-white/5 text-white border-white/10 hover:border-white/30'
-          }`}
         >
-          {isMerged ? 'Deconstruct Assets' : 'Gold:Silver Ratio'}
-        </motion.button>
-      </div>
-
-      {/* Market Info Display - Centered Bottom Horizontal Layout */}
-      <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 z-20 transition-opacity duration-500 ${isAnyMorphed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-        <div className="bg-white/[0.02] backdrop-blur-3xl px-12 py-6 rounded-[2.5rem] border border-white/5 flex flex-row items-center gap-16">
-          <div 
-            onClick={() => fetchHistory('gold')}
-            className="flex items-center gap-6 cursor-pointer group hover:bg-white/[0.03] px-6 py-3 -mx-6 rounded-2xl transition-all"
-          >
-            <div className="flex flex-col items-center">
-              <span className="text-[9px] tracking-[0.2em] text-white/30 uppercase font-mono mb-1 group-hover:text-[#FFD700] transition-colors">XAU Spot</span>
-              <span className="text-2xl font-extralight text-[#FFD700] font-mono tracking-tighter">${goldPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}<span className="text-sm text-white/50 ml-1">/oz</span></span>
-              <div className={`flex items-center gap-1.5 mt-1 text-xs font-mono font-bold ${goldChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                {goldChange >= 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
-                <span>${Math.abs(goldChange).toFixed(2)}</span>
-                <span>({Math.abs(goldChangePercent).toFixed(2)}%)</span>
-              </div>
-            </div>
-          </div>
-          <div className="w-px h-12 bg-white/5" />
-
-          <div 
-            onClick={() => fetchHistory('silver')}
-            className="flex items-center gap-6 cursor-pointer group hover:bg-white/[0.04] px-6 py-3 -mx-6 rounded-2xl transition-all"
-          >
-            <div className="flex flex-col items-center">
-              <span className="text-[9px] tracking-[0.2em] text-white/30 uppercase font-mono mb-1 group-hover:text-[#C0C0C0] transition-colors">XAG Spot</span>
-              <span className="text-2xl font-extralight text-[#C0C0C0] font-mono tracking-tighter">${silverPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}<span className="text-sm text-white/50 ml-1">/oz</span></span>
-              <div className={`flex items-center gap-1.5 mt-1 text-xs font-mono font-bold ${silverChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                {silverChange >= 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
-                <span>${Math.abs(silverChange).toFixed(2)}</span>
-                <span>({Math.abs(silverChangePercent).toFixed(2)}%)</span>
-              </div>
-            </div>
-            </div>
-
-          <div className="w-px h-12 bg-white/5" />
-
-          <div 
-            onClick={() => fetchHistory('btc')}
-            className="flex items-center gap-6 cursor-pointer group hover:bg-white/[0.05] px-6 py-3 -mx-6 rounded-2xl transition-all"
-          >
-            <div className="flex flex-col items-center">
-              <span className="text-[9px] tracking-[0.2em] text-white/30 uppercase font-mono mb-1 group-hover:text-[#F7931A] transition-colors">BTC / USD</span>
-              <span className="text-2xl font-extralight text-[#F7931A] font-mono tracking-tighter">${btcPrice.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}<span className="text-sm text-white/50 ml-1">/coin</span></span>
-              <div className={`flex items-center gap-1.5 mt-1 text-xs font-mono font-bold ${btcChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                {btcChange >= 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
-                <span>${Math.abs(btcChange).toFixed(0)}</span>
-                <span>({Math.abs(btcChangePercent).toFixed(2)}%)</span>
-              </div>
-            </div>
-          </div>
+          <IntelligencePage prices={prices} />
         </div>
-      </div>
 
-      {/* Close Button for Morphed Assets - REMOVED for independent buttons */}
+        {/* Smart Assets / Chat */}
+        <div
+          style={{
+            display: page === 'chat' ? 'block' : 'none',
+            width: '100%',
+            height: '100%',
+            position: 'absolute',
+            inset: 0,
+          }}
+        >
+          <ChatPage
+            prices={prices}
+            sentiments={
+              {
+                gold: goldSentiment,
+                silver: silverSentiment,
+                bitcoin: marketSentiment,
+              } satisfies Sentiments
+            }
+          />
+        </div>
+      </main>
     </div>
   );
 }
