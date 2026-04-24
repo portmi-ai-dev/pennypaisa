@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useState, useRef, useEffect, Suspense } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, OrbitControls, ContactShadows } from '@react-three/drei';
-import { GoogleGenAI, Type } from '@google/genai';
 import * as THREE from 'three';
 import { GoldBullion } from './components/GoldBullion';
 import { SilverBullion } from './components/SilverBullion';
@@ -112,106 +111,64 @@ export default function App() {
     return () => clearTimeout(timer);
   }, []);
 
-  // ── Fetch market sentiment via Gemini (unchanged from prior version) ──
+  const fetchSentiment = async () => {
+    const STORAGE_KEY = 'market_sentiment_cache';
+    const CACHE_DURATION = 60 * 60 * 1000;
+
+    try {
+      const cached = localStorage.getItem(STORAGE_KEY);
+      if (cached) {
+        const { timestamp, data } = JSON.parse(cached);
+        if (Date.now() - timestamp < CACHE_DURATION) {
+          setMarketSentiment(data.crypto);
+          setGoldSentiment(data.gold);
+          setSilverSentiment(data.silver);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to read sentiment cache', e);
+    }
+
+    try {
+      const response = await fetch('/api/intel/sentiment');
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) return;
+      const data = await response.json();
+      if (data?.crypto) setMarketSentiment(data.crypto);
+      if (data?.gold) setGoldSentiment(data.gold);
+      if (data?.silver) setSilverSentiment(data.silver);
+
+      if (data?.crypto || data?.gold || data?.silver) {
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({
+            timestamp: Date.now(),
+            data: {
+              crypto: data.crypto || marketSentiment,
+              gold: data.gold || goldSentiment,
+              silver: data.silver || silverSentiment,
+            },
+          }),
+        );
+      }
+    } catch (error) {
+      console.error('Error fetching sentiment:', error);
+      const fallback = {
+        marketType: 'bull' as const,
+        reasoning: 'Market showing strong resilience above key support levels.',
+        cowenView: 'Watching the bull market support band closely.',
+        solowayView: 'Technical breakout confirmed on the weekly chart.',
+      };
+      setMarketSentiment(fallback);
+      setGoldSentiment(fallback);
+      setSilverSentiment(fallback);
+    }
+  };
+
+  // ── Fetch market sentiment via backend ──
   useEffect(() => {
-    const fetchSentiment = async () => {
-      const STORAGE_KEY = 'market_sentiment_cache';
-      const CACHE_DURATION = 60 * 60 * 1000;
-
-      try {
-        const cached = localStorage.getItem(STORAGE_KEY);
-        if (cached) {
-          const { timestamp, data } = JSON.parse(cached);
-          if (Date.now() - timestamp < CACHE_DURATION) {
-            setMarketSentiment(data.crypto);
-            setGoldSentiment(data.gold);
-            setSilverSentiment(data.silver);
-            return;
-          }
-        }
-      } catch (e) {
-        console.warn('Failed to read sentiment cache', e);
-      }
-
-      try {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) throw new Error('API Key missing');
-        const ai = new GoogleGenAI({ apiKey });
-        const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
-
-        const fetchOne = async (label: string, contents: string) => {
-          try {
-            const r = await ai.models.generateContent({
-              model: 'gemini-3-flash-preview',
-              contents,
-              config: {
-                tools: [{ googleSearch: {} }],
-                responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    marketType: { type: Type.STRING },
-                    reasoning: { type: Type.STRING },
-                    cowenView: { type: Type.STRING },
-                    solowayView: { type: Type.STRING },
-                  },
-                  required: ['marketType', 'reasoning', 'cowenView', 'solowayView'],
-                },
-              },
-            });
-            if (r.text) {
-              return {
-                ...JSON.parse(r.text),
-                lastUpdated: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              };
-            }
-          } catch (e) {
-            console.warn(`${label} sentiment fetch failed:`, e);
-          }
-          return null;
-        };
-
-        const today = new Date().toLocaleDateString();
-        const prompt = (asset: string) =>
-          `Determine the absolute latest ${asset} market sentiment (Bull or Bear) as of today, ${today}, based on the most recent analysis, videos, and tweets from Benjamin Cowen and Gareth Soloway. Provide JSON: marketType ("bull"|"bear"), reasoning (MAX 30 WORDS), cowenView (MAX 25 WORDS), solowayView (MAX 25 WORDS).`;
-
-        const cryptoData = await fetchOne('Crypto', prompt('Bitcoin/Crypto'));
-        if (cryptoData) setMarketSentiment(cryptoData);
-        await delay(2000);
-        const goldData = await fetchOne('Gold', prompt('Gold (XAU)'));
-        if (goldData) setGoldSentiment(goldData);
-        await delay(2000);
-        const silverData = await fetchOne('Silver', prompt('Silver (XAG)'));
-        if (silverData) setSilverSentiment(silverData);
-
-        if (cryptoData || goldData || silverData) {
-          localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify({
-              timestamp: Date.now(),
-              data: {
-                crypto: cryptoData || marketSentiment,
-                gold: goldData || goldSentiment,
-                silver: silverData || silverSentiment,
-              },
-            }),
-          );
-        }
-      } catch (error) {
-        console.error('Error fetching sentiment:', error);
-        const fallback = {
-          marketType: 'bull' as const,
-          reasoning: 'Market showing strong resilience above key support levels.',
-          cowenView: 'Watching the bull market support band closely.',
-          solowayView: 'Technical breakout confirmed on the weekly chart.',
-        };
-        setMarketSentiment(fallback);
-        setGoldSentiment(fallback);
-        setSilverSentiment(fallback);
-      }
-    };
-
-    fetchSentiment();
+    void fetchSentiment();
   }, []);
 
   // ── Fetch real-time prices from backend ──
@@ -355,6 +312,7 @@ export default function App() {
                       onPointerOver={() => {
                         if (!morphedGold) document.body.style.cursor = 'pointer';
                         setHoveredAsset('gold');
+                        void fetchSentiment();
                       }}
                       onPointerOut={() => {
                         document.body.style.cursor = 'auto';
@@ -380,6 +338,7 @@ export default function App() {
                       onPointerOver={() => {
                         if (!morphedSilver) document.body.style.cursor = 'pointer';
                         setHoveredAsset('silver');
+                        void fetchSentiment();
                       }}
                       onPointerOut={() => {
                         document.body.style.cursor = 'auto';
