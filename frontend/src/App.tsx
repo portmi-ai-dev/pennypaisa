@@ -16,7 +16,7 @@ import { AppHeader, type PageId } from './components/AppHeader';
 import { IntelligencePage } from './components/IntelligencePage';
 import { ChatPage } from './components/ChatPage';
 import { ChartPage } from './components/ChartPage';
-import { type Prices, type AssetKey, type Sentiments, ASSET_CONFIG, visualTier } from './lib/marketData';
+import { type Prices, type AssetKey, type Sentiments } from './lib/marketData';
 
 // If the URL contains ?chart=<asset>, this tab is a dedicated full-screen
 // candlestick view. Resolved once at module load — the URL doesn't change
@@ -89,7 +89,10 @@ export default function App() {
   const [showBlockchain, setShowBlockchain] = useState(false);
   // Which bullion is currently being hovered — drives the floating Market
   // Intelligence panel (spec: "Hovering on the Bullions show Market Intelligence").
-  const [hoveredAsset, setHoveredAsset] = useState<AssetKey | null>(null);
+  // Tracks which bullion the cursor is over. Currently only the setter is
+  // used (the smaller HTML hover popup that read this was removed) — kept
+  // wired up in the bullion onPointerOver/Out callbacks for future overlays.
+  const [, setHoveredAsset] = useState<AssetKey | null>(null);
 
   const [marketSentiment, setMarketSentiment] = useState<{
     marketType: 'bull' | 'bear' | 'neutral';
@@ -263,12 +266,17 @@ export default function App() {
   const totalWidth = 10;
   const goldTargetWidth = isMerged ? totalWidth * goldWeight : 10;
   const silverTargetWidth = isMerged ? totalWidth * silverWeight : 10;
+  // 3D bullion resting Y is -7 (slightly lower than previous -6) so the
+  // bullions sit comfortably below the centred Au:Ag ratio / hover panels.
+  // The MORPHED 2D plate positions (passed inline at the AnimatedBullion call
+  // site as [-7,-4,0] / [7,-4,0]) intentionally stay where they were so the
+  // chart plate remains anchored to its existing on-screen slot.
   const goldTargetPos: [number, number, number] = isMerged
-    ? [-(totalWidth / 2) + goldTargetWidth / 2, -6, 0]
-    : [-6.5, -6, 0];
+    ? [-(totalWidth / 2) + goldTargetWidth / 2, -7, 0]
+    : [-6.5, -7, 0];
   const silverTargetPos: [number, number, number] = isMerged
-    ? [totalWidth / 2 - silverTargetWidth / 2, -6, 0]
-    : [6.5, -6, 0];
+    ? [totalWidth / 2 - silverTargetWidth / 2, -7, 0]
+    : [6.5, -7, 0];
 
   const isAnyMorphed = morphedGold || morphedSilver;
 
@@ -514,243 +522,11 @@ export default function App() {
             <div className="ml-auto mt-4" style={{ height: 1, width: 128, background: 'rgba(255,255,255,0.1)' }} />
           </div>
 
-          {/* Hover-driven Market Intelligence overlay (spec: hovering on bullions
-              surfaces market intelligence — trend, analyst views) */}
-          <AnimatePresence>
-            {hoveredAsset && !isAnyMorphed && (() => {
-              const sent =
-                hoveredAsset === 'gold'
-                  ? goldSentiment
-                  : hoveredAsset === 'silver'
-                  ? silverSentiment
-                  : marketSentiment;
-              const cfg = ASSET_CONFIG[hoveredAsset];
-              const p = prices?.[hoveredAsset];
-              const tier = visualTier(hoveredAsset, p?.weeklyChangePercent);
-              const sideStyle: React.CSSProperties =
-                hoveredAsset === 'silver'
-                  ? { right: 32 }
-                  : hoveredAsset === 'gold'
-                  ? { left: 32 }
-                  : { left: '50%', transform: 'translateX(-50%)' };
-              return (
-                <motion.div
-                  key={`intel-${hoveredAsset}`}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 12 }}
-                  transition={{ duration: 0.2 }}
-                  style={{
-                    position: 'absolute',
-                    top: 110,
-                    width: 320,
-                    padding: 18,
-                    background: 'rgba(6,6,14,0.78)',
-                    border: `1px solid ${cfg.colorBorder}`,
-                    borderRadius: 6,
-                    backdropFilter: 'blur(20px)',
-                    WebkitBackdropFilter: 'blur(20px)',
-                    boxShadow: `0 8px 28px rgba(0,0,0,0.5), 0 0 32px ${cfg.colorDim}`,
-                    zIndex: 50,
-                    pointerEvents: 'none',
-                    fontFamily: 'DM Sans, sans-serif',
-                    color: '#e8e0d0',
-                    ...sideStyle,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <div>
-                      <div style={{ fontSize: 9, letterSpacing: 2.4, textTransform: 'uppercase', color: cfg.color, marginBottom: 4 }}>
-                        {cfg.sym} · Market Intelligence
-                      </div>
-                      <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 22, fontWeight: 400, lineHeight: 1 }}>
-                        {cfg.name}
-                        <span style={{ color: 'rgba(255,255,255,0.32)', fontSize: 13, marginLeft: 8, fontStyle: 'italic' }}>
-                          {cfg.tagline}
-                        </span>
-                      </div>
-                    </div>
-                    {sent?.marketType && (
-                      <span
-                        style={{
-                          fontSize: 9,
-                          letterSpacing: 2,
-                          textTransform: 'uppercase',
-                          padding: '3px 8px',
-                          borderRadius: 3,
-                          background:
-                            sent.marketType === 'bull'
-                              ? 'rgba(76,175,80,0.14)'
-                              : sent.marketType === 'bear'
-                              ? 'rgba(239,83,80,0.14)'
-                              : 'rgba(255,255,255,0.08)',
-                          color:
-                            sent.marketType === 'bull'
-                              ? '#7fc983'
-                              : sent.marketType === 'bear'
-                              ? '#ef8a87'
-                              : 'rgba(255,255,255,0.5)',
-                        }}
-                      >
-                        {sent.marketType}
-                      </span>
-                    )}
-                  </div>
-
-                  {sent?.reasoning ? (
-                    <p style={{ fontSize: 12, lineHeight: 1.5, color: 'rgba(232,224,208,0.78)', margin: '0 0 12px' }}>
-                      {sent.reasoning}
-                    </p>
-                  ) : (
-                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.32)', margin: '0 0 12px', fontStyle: 'italic' }}>
-                      Synthesizing analyst consensus…
-                    </p>
-                  )}
-
-                  {(sent?.cowenView || sent?.solowayView) && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-                      {sent.cowenView && (
-                        <div style={{ borderLeft: `2px solid ${cfg.color}`, paddingLeft: 8 }}>
-                          <div style={{ fontSize: 8, letterSpacing: 2, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>
-                            Cowen
-                          </div>
-                          <div style={{ fontSize: 11, color: 'rgba(232,224,208,0.85)', lineHeight: 1.45 }}>{sent.cowenView}</div>
-                        </div>
-                      )}
-                      {sent.solowayView && (
-                        <div style={{ borderLeft: `2px solid ${cfg.color}`, paddingLeft: 8 }}>
-                          <div style={{ fontSize: 8, letterSpacing: 2, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>
-                            Soloway
-                          </div>
-                          <div style={{ fontSize: 11, color: 'rgba(232,224,208,0.85)', lineHeight: 1.45 }}>{sent.solowayView}</div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      paddingTop: 10,
-                      borderTop: '1px solid rgba(255,255,255,0.06)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <span style={{ fontSize: 8, letterSpacing: 2, color: 'rgba(255,255,255,0.32)', textTransform: 'uppercase' }}>
-                        Weekly state
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          color:
-                            tier.tone === 'positive'
-                              ? '#7fc983'
-                              : tier.tone === 'negative'
-                              ? '#ef8a87'
-                              : 'rgba(255,255,255,0.5)',
-                        }}
-                      >
-                        {tier.label}
-                      </span>
-                    </div>
-                    {p && (
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: 14, color: '#e8e0d0' }}>
-                          {hoveredAsset === 'bitcoin'
-                            ? `$${p.price.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-                            : `$${p.price.toFixed(2)}`}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 10,
-                            color: p.changePercent24h >= 0 ? '#7fc983' : '#ef8a87',
-                          }}
-                        >
-                          {p.changePercent24h >= 0 ? '+' : ''}
-                          {p.changePercent24h.toFixed(2)}% · 24h
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              );
-            })()}
-          </AnimatePresence>
-
-          {/* Weekly visual-state strip — bottom-center, shows the spec's percentage-led
-              tiers (charged / super-charged / aura, cracks / melt / fissures) for each
-              bullion based on weekly change. */}
-          {!isAnyMorphed && prices && (
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 28,
-                left: '50%',
-                transform: 'translateX(-50%)',
-                zIndex: 15,
-                display: 'flex',
-                gap: 14,
-                fontFamily: 'DM Sans, sans-serif',
-                pointerEvents: 'none',
-              }}
-            >
-              {(['gold', 'silver', ...(showBitcoin ? (['bitcoin'] as const) : [])] as AssetKey[]).map((a) => {
-                const cfg = ASSET_CONFIG[a];
-                const tier = visualTier(a, prices[a]?.weeklyChangePercent);
-                const dotColor =
-                  tier.tone === 'positive' ? cfg.color : tier.tone === 'negative' ? '#ef5350' : 'rgba(255,255,255,0.3)';
-                return (
-                  <div
-                    key={a}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '6px 12px',
-                      background: 'rgba(5,5,12,0.65)',
-                      border: `1px solid ${cfg.colorBorder}`,
-                      borderRadius: 999,
-                      backdropFilter: 'blur(14px)',
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        background: dotColor,
-                        boxShadow: tier.intensity > 0 ? `0 0 ${4 + tier.intensity * 3}px ${dotColor}` : 'none',
-                      }}
-                    />
-                    <span style={{ fontSize: 9, letterSpacing: 2, color: cfg.color, textTransform: 'uppercase' }}>
-                      {cfg.sym}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        color:
-                          tier.tone === 'positive'
-                            ? '#7fc983'
-                            : tier.tone === 'negative'
-                            ? '#ef8a87'
-                            : 'rgba(255,255,255,0.5)',
-                      }}
-                    >
-                      {tier.label}
-                    </span>
-                    {prices[a]?.weeklyChangePercent !== undefined && (
-                      <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.32)' }}>
-                        {prices[a]!.weeklyChangePercent! >= 0 ? '+' : ''}
-                        {prices[a]!.weeklyChangePercent!.toFixed(2)}% wk
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          {/* NOTE: The smaller XAU/XAG hover Market Intelligence pop-up and the
+              bottom-center Bullion-State strip were removed per design — the
+              full intelligence breakdown lives in the Intelligence tab and the
+              large in-scene panels rendered by GoldBullion / SilverBullion /
+              BitcoinCuboid on hover. */}
 
           {/* Back arrows for morphed assets */}
           <AnimatePresence>

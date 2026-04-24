@@ -31,101 +31,135 @@ interface BitcoinCuboidProps {
 const INTER_FONT = "https://fonts.gstatic.com/s/inter/v12/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hjp-Ek-_EeA.woff";
 
 const SentimentDisplay: React.FC<{ marketType: 'bull' | 'bear' | 'neutral' }> = ({ marketType }) => {
-  const bearShape = useMemo(() => {
-    const shape = new THREE.Shape();
-    // Walking bear silhouette approximation
-    shape.moveTo(-1.0, -0.5); // Back leg back
-    shape.lineTo(-0.7, -0.5); // Back leg front
-    shape.lineTo(-0.6, -0.1); // Belly
-    shape.lineTo(-0.2, -0.1); // Belly
-    shape.lineTo(-0.1, -0.5); // Front leg back
-    shape.lineTo(0.2, -0.5);  // Front leg front
-    shape.lineTo(0.3, 0.1);   // Chest
-    shape.lineTo(0.7, 0.1);   // Neck bottom
-    shape.lineTo(0.9, 0.0);   // Snout bottom
-    shape.lineTo(1.1, 0.1);   // Snout tip
-    shape.lineTo(1.1, 0.3);   // Snout top
-    shape.lineTo(0.9, 0.4);   // Forehead
-    shape.lineTo(0.8, 0.6);   // Ear front
-    shape.lineTo(0.7, 0.6);   // Ear back
-    shape.lineTo(0.6, 0.5);   // Head back
-    shape.quadraticCurveTo(0.2, 0.8, -0.3, 0.7); // Hump
-    shape.lineTo(-0.8, 0.6);  // Back
-    shape.quadraticCurveTo(-1.1, 0.5, -1.1, 0.1); // Tail/Rear
-    shape.closePath();
-    return shape;
+  // Beefier, more recognisable silhouettes drawn with more silhouette mass so
+  // the bull/bear actually reads as an animal even at small scale on the front
+  // face. Procedural Shape (no texture) so we don't need extra asset files.
+  const bullShape = useMemo(() => {
+    const s = new THREE.Shape();
+    // Body & legs (forward-facing bull, head right)
+    s.moveTo(-1.05, -0.55);
+    s.lineTo(-0.65, -0.55);              // back-leg foot
+    s.lineTo(-0.55, -0.1);               // back-leg upper
+    s.lineTo(0.25, -0.1);                // belly
+    s.lineTo(0.35, -0.55);               // front-leg upper
+    s.lineTo(0.75, -0.55);               // front-leg foot
+    s.lineTo(0.85, 0.05);                // chest
+    s.lineTo(1.05, 0.15);                // neck bottom
+    s.lineTo(1.30, 0.30);                // snout bottom
+    s.lineTo(1.32, 0.55);                // snout tip
+    s.lineTo(1.18, 0.70);                // jaw
+    s.lineTo(1.40, 0.95);                // right horn tip
+    s.lineTo(1.10, 0.85);                // right horn base
+    s.lineTo(0.95, 1.00);                // forehead
+    s.lineTo(0.65, 1.05);                // left horn base
+    s.lineTo(0.50, 1.25);                // left horn tip
+    s.lineTo(0.55, 0.95);                // head back
+    s.quadraticCurveTo(0.0, 1.10, -0.55, 0.85); // hump
+    s.lineTo(-1.05, 0.55);               // back
+    s.quadraticCurveTo(-1.25, 0.30, -1.05, -0.05); // rump
+    s.lineTo(-1.10, -0.20);              // tail tuft
+    s.closePath();
+    return s;
   }, []);
 
-  const bullShape = useMemo(() => {
-    const shape = new THREE.Shape();
-    // Bull silhouette approximation
-    shape.moveTo(-0.9, -0.5); // Back leg
-    shape.lineTo(-0.6, -0.5);
-    shape.lineTo(-0.5, 0);
-    shape.lineTo(0.1, 0);
-    shape.lineTo(0.2, -0.5); // Front leg
-    shape.lineTo(0.5, -0.5);
-    shape.lineTo(0.6, 0.2);
-    shape.lineTo(0.9, 0.2); // Head bottom
-    shape.lineTo(1.1, 0.4); // Snout
-    shape.lineTo(1.1, 0.6); // Forehead
-    shape.lineTo(0.9, 0.8); // Horn base
-    shape.lineTo(1.0, 1.0); // Horn tip
-    shape.lineTo(0.8, 0.8); // Horn back
-    shape.lineTo(0.6, 0.7); // Neck top
-    shape.quadraticCurveTo(0, 0.9, -0.4, 0.7); // Hump
-    shape.lineTo(-0.9, 0.5); // Back
-    shape.closePath();
-    return shape;
+  const bearShape = useMemo(() => {
+    const s = new THREE.Shape();
+    // Standing bear, head-right
+    s.moveTo(-1.10, -0.55);
+    s.lineTo(-0.55, -0.55);              // back paw
+    s.lineTo(-0.45, -0.10);              // back leg
+    s.lineTo(0.30, -0.10);               // belly
+    s.lineTo(0.40, -0.55);               // front leg
+    s.lineTo(0.85, -0.55);               // front paw
+    s.lineTo(0.95, 0.10);                // chest
+    s.lineTo(1.15, 0.20);                // neck bottom
+    s.lineTo(1.35, 0.35);                // snout bottom
+    s.lineTo(1.38, 0.55);                // snout tip
+    s.lineTo(1.20, 0.70);                // upper snout
+    s.lineTo(1.10, 0.95);                // right ear front
+    s.lineTo(0.85, 1.00);                // right ear back
+    s.lineTo(0.70, 0.85);                // head dip
+    s.lineTo(0.45, 0.95);                // left ear front
+    s.lineTo(0.25, 0.95);                // left ear back
+    s.lineTo(0.20, 0.80);                // back of head
+    s.quadraticCurveTo(-0.30, 1.05, -0.85, 0.85); // big rounded hump
+    s.lineTo(-1.20, 0.55);               // back
+    s.quadraticCurveTo(-1.35, 0.20, -1.10, -0.10); // rump
+    s.closePath();
+    return s;
   }, []);
+
+  if (marketType === 'neutral') {
+    return (
+      <group position={[0, 0, 1.11]}>
+        <mesh position={[0, 0, -0.01]}>
+          <planeGeometry args={[1.95, 1.95]} />
+          <meshBasicMaterial color="#222230" transparent opacity={0.55} />
+        </mesh>
+        <Text position={[0, 0.15, 0]} fontSize={0.7} color="#cccccc" fontWeight="bold" font={INTER_FONT}>~</Text>
+        <Text position={[0, -0.55, 0]} fontSize={0.22} color="#cccccc" fontWeight="bold" font={INTER_FONT}>NEUTRAL MOOD</Text>
+      </group>
+    );
+  }
+
+  const isBull = marketType === 'bull';
+  const accent = isBull ? '#00ff66' : '#ff3a3a';
+  const accentDim = isBull ? 'rgba(0,255,102,0.18)' : 'rgba(255,58,58,0.18)';
+  const shape = isBull ? bullShape : bearShape;
 
   return (
-    <group position={[0, -0.1, 1.11]} scale={0.7}>
-      {marketType === 'bear' ? (
-        <group>
-          <mesh>
-            <shapeGeometry args={[bearShape]} />
-            <meshBasicMaterial color="#ff0000" side={THREE.DoubleSide} />
-          </mesh>
-          {/* Eye */}
-          <mesh position={[0.85, 0.35, 0.01]}>
-            <circleGeometry args={[0.04, 16]} />
-            <meshBasicMaterial color="#ffffff" />
-          </mesh>
-          {/* Bearish Mood Text */}
-          <Text
-            position={[0, -0.8, 0.01]}
-            fontSize={0.25}
-            color="#ff0000"
-            fontWeight="bold"
-            anchorY="top"
-          >
-            BEARISH MOOD
-          </Text>
-        </group>
-      ) : marketType === 'bull' ? (
-        <group>
-          <mesh>
-            <shapeGeometry args={[bullShape]} />
-            <meshBasicMaterial color="#00ff00" side={THREE.DoubleSide} />
-          </mesh>
-          {/* Eye */}
-          <mesh position={[0.85, 0.45, 0.01]}>
-            <circleGeometry args={[0.04, 16]} />
-            <meshBasicMaterial color="#ffffff" />
-          </mesh>
-          {/* Bullish Mood Text for consistency */}
-          <Text
-            position={[0, -0.8, 0.01]}
-            fontSize={0.25}
-            color="#00ff00"
-            fontWeight="bold"
-            anchorY="top"
-          >
-            BULLISH MOOD
-          </Text>
-        </group>
-      ) : null}
+    <group position={[0, 0, 1.11]}>
+      {/* Coloured card so the silhouette stands out against the dark cuboid */}
+      <mesh position={[0, 0, -0.015]}>
+        <planeGeometry args={[1.95, 1.95]} />
+        <meshBasicMaterial color={accent} transparent opacity={0.18} />
+      </mesh>
+      {/* Inner dark plate for contrast behind the silhouette */}
+      <mesh position={[0, 0.05, -0.008]}>
+        <planeGeometry args={[1.7, 1.45]} />
+        <meshBasicMaterial color="#050510" transparent opacity={0.78} />
+      </mesh>
+      {/* Big bold silhouette (centred + scaled to fill the card) */}
+      <group position={[-0.05, 0.15, 0]} scale={0.6}>
+        <mesh>
+          <shapeGeometry args={[shape]} />
+          <meshBasicMaterial color={accent} side={THREE.DoubleSide} />
+        </mesh>
+        {/* Eye */}
+        <mesh position={[isBull ? 1.05 : 1.10, isBull ? 0.55 : 0.55, 0.01]}>
+          <circleGeometry args={[0.06, 16]} />
+          <meshBasicMaterial color="#ffffff" />
+        </mesh>
+        <mesh position={[isBull ? 1.05 : 1.10, isBull ? 0.55 : 0.55, 0.02]}>
+          <circleGeometry args={[0.025, 16]} />
+          <meshBasicMaterial color="#000000" />
+        </mesh>
+      </group>
+      {/* Mood label */}
+      <Text
+        position={[0, -0.70, 0]}
+        fontSize={0.30}
+        color={accent}
+        fontWeight="bold"
+        anchorX="center"
+        anchorY="middle"
+        font={INTER_FONT}
+        letterSpacing={0.12}
+        outlineWidth={0.005}
+        outlineColor="#000000"
+      >
+        {isBull ? 'BULLISH MOOD' : 'BEARISH MOOD'}
+      </Text>
+      {/* Faint accent underline */}
+      <mesh position={[0, -0.88, 0]}>
+        <planeGeometry args={[1.4, 0.015]} />
+        <meshBasicMaterial color={accent} transparent opacity={0.6} />
+      </mesh>
+      {/* Soft outer halo to imply "image" framing */}
+      <mesh position={[0, 0, -0.02]}>
+        <planeGeometry args={[2.05, 2.05]} />
+        <meshBasicMaterial color={accent} transparent opacity={0.08} />
+      </mesh>
     </group>
   );
 };
@@ -211,6 +245,12 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
   const showMoon = weeklyChangePercent > 10.0;
 
   useEffect(() => {
+    // Pause the front-face rotation while the intelligence panel is open so
+    // the user can read the panel without the face flipping under them.
+    if (hoveredLogo) {
+      if (displayMode !== 'default') setDisplayMode('default');
+      return;
+    }
     const duration = displayMode === 'default' ? 5000 : 2000;
     const timer = setTimeout(() => {
       if (showMoon) {
@@ -224,7 +264,7 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
       }
     }, duration);
     return () => clearTimeout(timer);
-  }, [displayMode, showMoon]);
+  }, [displayMode, showMoon, hoveredLogo]);
   
   const barMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
 
@@ -264,9 +304,11 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
   return (
     <group>
       <Float speed={1.5} rotationIntensity={0.1} floatIntensity={0.2}>
-        <group position={[0, -2.5, 0]}>
-        <group 
-          ref={groupRef} 
+        {/* Cuboid resting Y lowered to -3.5 (was -2.5) so the BTC cube sits
+            comfortably with the lowered Gold/Silver bullions. */}
+        <group position={[0, -3.5, 0]}>
+        <group
+          ref={groupRef}
           onClick={(e) => {
             e.stopPropagation();
             soundManager.playBitcoinHum();
@@ -280,9 +322,30 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
           )}
 
           <RoundedBox
-            args={[2.2, 2.2, 2.2]} 
+            args={[2.2, 2.2, 2.2]}
             radius={0.05}
             smoothness={10}
+            // Hover directly on the cuboid mesh (matches GoldBullion / SilverBullion's
+            // pattern of attaching pointer handlers to a specific always-visible
+            // mesh rather than to a parent <group>, which doesn't reliably bubble
+            // through <Float> + drei's RoundedBox in R3F).
+            onPointerOver={(e) => {
+              e.stopPropagation();
+              if (!hoveredLogo) {
+                if (marketSentiment?.marketType === 'bull') {
+                  soundManager.playBullBellow();
+                } else if (marketSentiment?.marketType === 'bear') {
+                  soundManager.playBearRoar();
+                } else {
+                  soundManager.playRuffle();
+                }
+                setHoveredLogo(true);
+              }
+            }}
+            onPointerOut={(e) => {
+              e.stopPropagation();
+              setHoveredLogo(false);
+            }}
           >
             <meshPhysicalMaterial
               ref={barMaterialRef}
@@ -385,23 +448,41 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
               />
             </mesh>
 
+            {/* Backup hover-capture plane on the front face. Renders as an
+                effectively-invisible (opacity 0.001) but real visible mesh so
+                R3F's raycaster definitely picks it up — guarantees the
+                Market Intelligence panel pops up regardless of what the
+                front facet is currently displaying (₿ / sentiment / moon). */}
+            <mesh
+              position={[0, 0, 1.115]}
+              onPointerOver={(e) => {
+                e.stopPropagation();
+                if (!hoveredLogo) {
+                  if (marketSentiment?.marketType === 'bull') {
+                    soundManager.playBullBellow();
+                  } else if (marketSentiment?.marketType === 'bear') {
+                    soundManager.playBearRoar();
+                  } else {
+                    soundManager.playRuffle();
+                  }
+                  setHoveredLogo(true);
+                }
+              }}
+              onPointerOut={(e) => {
+                e.stopPropagation();
+                setHoveredLogo(false);
+              }}
+            >
+              <planeGeometry args={[2.0, 2.0]} />
+              <meshBasicMaterial color="#000000" transparent opacity={0.001} depthWrite={false} />
+            </mesh>
+
             {/* Bitcoin Symbol (Front Face) */}
             <Text
               position={[0, 0.4, 1.11]}
               fontSize={1.2}
               color="#F7931A" // Bitcoin Orange
               fontWeight="bold"
-              onPointerOver={() => {
-                if (marketSentiment?.marketType === 'bull') {
-                  soundManager.playBullBellow();
-                } else if (marketSentiment?.marketType === 'bear') {
-                  soundManager.playBearRoar();
-                } else {
-                  soundManager.playRuffle();
-                }
-                setHoveredLogo(true);
-              }}
-              onPointerOut={() => setHoveredLogo(false)}
               visible={displayMode === 'default'}
             >
               ₿
@@ -429,9 +510,12 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
               {isPositive ? '+' : ''}{changePercent.toFixed(2)}%
             </Text>
 
-            {/* Sentiment Animal Display (Front Face) */}
-            {displayMode === 'sentiment' && marketSentiment && (
-              <SentimentDisplay marketType={marketSentiment.marketType} />
+            {/* Sentiment Animal Display (Front Face)
+                Always render in sentiment mode — falls back to "neutral"
+                while the Gemini-fed marketSentiment is null/loading so the
+                front-face rotation is always visibly happening. */}
+            {displayMode === 'sentiment' && (
+              <SentimentDisplay marketType={marketSentiment?.marketType ?? 'neutral'} />
             )}
 
             {/* To The Moon Display (Front Face) */}
@@ -478,15 +562,34 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
           </>
         )}
       </group>
-    </Float>    {/* Static Hover Pop-up Reasoning - Moved to the LEFT of the cuboid, elevated to avoid bullion */}
-    {hoveredLogo && marketSentiment && (
-      <group position={[-8.5, 1.8, 0]}>
+    </Float>    {/* Static Hover Pop-up Reasoning — positioned above the cuboid so it
+        sits inside the camera frustum (camera is at [0,2,18] FOV 45, so the
+        old [-8.5, 1.8, 0] anchor placed the 15-wide panel mostly off-screen
+        to the left). Mirrors the placement Gold/Silver use above their
+        bullions. Y shifted in lockstep with the cuboid drop to keep the
+        relative gap between cuboid and panel stable. */}
+    {hoveredLogo && (() => {
+      // Fallback so the panel still renders nicely while the Gemini sentiment
+      // request is in flight (or returned null). Without these defaults the
+      // panel would crash on `marketSentiment.marketType` etc.
+      const sent = marketSentiment ?? {
+        marketType: 'neutral' as const,
+        reasoning: 'Synthesizing analyst consensus from on-chain flows, derivatives positioning, and macro signals…',
+        cowenView: 'Loading on-chain risk model…',
+        solowayView: 'Loading technical setup…',
+        lastUpdated: undefined,
+      };
+      const accent = sent.marketType === 'bull' ? '#00ff00'
+                   : sent.marketType === 'bear' ? '#ff0000'
+                   : '#9aa0b4';
+      return (
+      <group position={[0, 2.5, 0]}>
         <Billboard follow={true}>
             {/* Main Background Panel - Deep Obsidian Glass style */}
             <mesh position={[0, 0, -0.05]} frustumCulled={false}>
               <planeGeometry args={[15, 8.5]} />
-              <meshPhysicalMaterial 
-                color="#000000" 
+              <meshPhysicalMaterial
+                color="#000000"
                 emissive="#000510"
                 emissiveIntensity={0.2}
                 transmission={0.3}
@@ -494,19 +597,15 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
                 roughness={0.1}
                 metalness={0.05}
                 ior={1.5}
-                transparent 
-                opacity={0.98} 
+                transparent
+                opacity={0.98}
               />
             </mesh>
-            
+
             {/* Accent Border Glow - Subtle and refined */}
             <mesh position={[0, 0, -0.06]} frustumCulled={false}>
               <planeGeometry args={[15.1, 8.6]} />
-              <meshBasicMaterial 
-                color={marketSentiment.marketType === 'bull' ? "#00ff00" : "#ff0000"} 
-                transparent 
-                opacity={0.15} 
-              />
+              <meshBasicMaterial color={accent} transparent opacity={0.15} />
             </mesh>
 
             {/* Header Section */}
@@ -525,25 +624,21 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
                 <meshBasicMaterial color="#ffffff" transparent opacity={0.3} />
               </mesh>
             </group>
-            
+
             {/* Consensus Badge */}
             <group position={[0, 2.2, 0]}>
               <mesh position={[0, 0, -0.01]} frustumCulled={false}>
                 <planeGeometry args={[7, 0.8]} />
-                <meshBasicMaterial 
-                  color={marketSentiment.marketType === 'bull' ? "#00ff00" : "#ff0000"} 
-                  transparent 
-                  opacity={0.2} 
-                />
+                <meshBasicMaterial color={accent} transparent opacity={0.2} />
               </mesh>
               <Text
                 fontSize={0.5}
-                color={marketSentiment.marketType === 'bull' ? "#00ff00" : "#ff0000"}
+                color={accent}
                 fontWeight="bold"
                 textAlign="center"
                 font={INTER_FONT}
               >
-                CONSENSUS: {marketSentiment.marketType.toUpperCase()}
+                CONSENSUS: {sent.marketType.toUpperCase()}
               </Text>
             </group>
 
@@ -558,7 +653,7 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
                 lineHeight={1.4}
                 font={INTER_FONT}
               >
-                {marketSentiment.reasoning}
+                {sent.reasoning}
               </Text>
             </group>
 
@@ -592,7 +687,7 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
                   lineHeight={1.3}
                   font={INTER_FONT}
                 >
-                  {marketSentiment.cowenView}
+                  {sent.cowenView}
                 </Text>
               </group>
 
@@ -624,7 +719,7 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
                   lineHeight={1.3}
                   font={INTER_FONT}
                 >
-                  {marketSentiment.solowayView}
+                  {sent.solowayView}
                 </Text>
               </group>
             </group>
@@ -637,11 +732,12 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
               textAlign="center"
               font={INTER_FONT}
             >
-              AI AGGREGATED MARKET SENTIMENT • {marketSentiment.lastUpdated ? `UPDATED AT ${marketSentiment.lastUpdated}` : 'REAL-TIME DATA'}
+              AI AGGREGATED MARKET SENTIMENT • {sent.lastUpdated ? `UPDATED AT ${sent.lastUpdated}` : 'REAL-TIME DATA'}
             </Text>
         </Billboard>
       </group>
-    )}
+      );
+    })()}
   </group>
 );
 };

@@ -76,6 +76,29 @@ YAHOO_FUTURES_SYMBOLS: dict[str, str] = {
     "silver": "SI=F",
 }
 
+# Investing.com pair IDs for spot gold and silver. Their /financialdata
+# endpoint returns clean, complete monthly/weekly/daily OHLC matching what
+# you see on TradingView and Kitco — including months Yahoo's GC=F/SI=F
+# continuous contracts skip during contract-roll periods.
+INVESTING_PAIR_IDS: dict[str, int] = {
+    "gold": 8830,    # XAU/USD spot
+    "silver": 8836,  # XAG/USD spot
+}
+
+INVESTING_TIMEFRAME: dict[str, str] = {
+    "1d": "Daily",
+    "1w": "Weekly",
+    "1mo": "Monthly",
+}
+
+# How far back to ask Investing.com for, per interval. Larger windows pull
+# more candles but the API returns ~1000 max per call.
+INVESTING_LOOKBACK_YEARS: dict[str, int] = {
+    "1d": 2,
+    "1w": 5,
+    "1mo": 20,
+}
+
 BINANCE_INTERVAL: dict[str, str] = {
     "1m": "1m",
     "5m": "5m",
@@ -378,6 +401,58 @@ async def get_prices(request: Request) -> PricesResponse:
         )
 
 
+# Maximum wick excess past the body before we treat it as a flash-spike
+# anomaly to clip. CFD/futures feeds occasionally include cancelled fat-finger
+# trades that retraced within seconds — Kitco / TradingView / spot reference
+# feeds filter those out. 35% above body / below body is generous enough that
+# genuine volatile months (e.g. silver squeezes) survive while a 70% one-tick
+# wick (silver Jan-2026 flash to $121 retracing to $78) gets clipped.
+_WICK_MAX_ABOVE_BODY = 1.35
+_WICK_MAX_BELOW_BODY = 0.65
+
+
+def _sanitize_candles(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize each candle's OHLC.
+
+    Two corrections:
+      1. **Self-consistency**: archival monthly bars sometimes have `close`
+         fractionally above `high` or `low` above `open` (rounding drift).
+         We trust the body (open & close) and widen the wick to contain it.
+      2. **Flash-spike clipping**: feeds like Investing.com / Yahoo include
+         cancelled fat-finger trades that don't appear on TradingView/Kitco.
+         Clip wicks more than `_WICK_MAX_ABOVE_BODY` above the body top or
+         below `_WICK_MAX_BELOW_BODY` of the body bottom.
+    """
+    fixed: list[dict[str, Any]] = []
+    for c in candles:
+        try:
+            o = float(c["open"])
+            h = float(c["high"])
+            l = float(c["low"])
+            cl = float(c["close"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        body_hi = max(o, cl)
+        body_lo = min(o, cl)
+        # 1. Widen wick to contain the body (rounding drift).
+        if h < body_hi:
+            h = body_hi
+        if l > body_lo:
+            l = body_lo
+        # 2. Clip implausible flash-spike wicks. Only applied when there is
+        #    genuine body movement (avoids over-clipping doji bars).
+        if body_hi > 0:
+            cap_high = body_hi * _WICK_MAX_ABOVE_BODY
+            if h > cap_high:
+                h = cap_high
+        if body_lo > 0:
+            cap_low = body_lo * _WICK_MAX_BELOW_BODY
+            if l < cap_low:
+                l = cap_low
+        fixed.append({**c, "open": o, "high": h, "low": l, "close": cl})
+    return fixed
+
+
 def _valid_candles(candles: list[dict[str, Any]]) -> bool:
     """Sanity-check a candle list before serving / caching it.
 
@@ -491,6 +566,138 @@ async def _fetch_yahoo(client, symbol: str, interval: str) -> list[dict[str, Any
     return _from_yahoo(payload)
 
 
+async def _fetch_investing(asset: str, interval: str) -> list[dict[str, Any]]:
+    """Fetch OHLC from Investing.com's public /financialdata endpoint.
+
+    This is the authoritative spot XAU/USD and XAG/USD source for daily,
+    weekly, and monthly bars — Yahoo's continuous-futures contracts drop
+    months during roll periods (the original bug surfaced as the gold/silver
+    monthly chart missing Feb & Mar 2026).
+
+    Investing.com TLS-fingerprints stock httpx the same way Yahoo does, so
+    we always go through curl_cffi. Returns [] on any failure; the caller
+    falls back to Yahoo.
+    """
+    pid = INVESTING_PAIR_IDS.get(asset)
+    timeframe = INVESTING_TIMEFRAME.get(interval)
+    if not pid or not timeframe or not _HAS_CURL_CFFI or _CurlSession is None:
+        return []
+
+    today = datetime.now(timezone.utc).date()
+    years_back = INVESTING_LOOKBACK_YEARS.get(interval, 2)
+    try:
+        start = today.replace(year=today.year - years_back)
+    except ValueError:
+        # Feb 29 edge case
+        start = today.replace(year=today.year - years_back, day=28)
+
+    url = (
+        f"https://api.investing.com/api/financialdata/historical/{pid}"
+        f"?start-date={start.isoformat()}"
+        f"&end-date={today.isoformat()}"
+        f"&time-frame={timeframe}"
+        f"&add-missing-rows=false"
+    )
+    headers = {"domain-id": "www", "Referer": "https://www.investing.com/"}
+
+    try:
+        async with _CurlSession(impersonate="chrome120") as session:
+            response = await session.get(url, timeout=15, headers=headers)
+            if response.status_code != 200:
+                return []
+            payload = response.json()
+    except Exception as exc:
+        print(f"Investing.com fetch failed for {asset} ({interval}): {exc}")
+        return []
+
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+
+    candles: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            candles.append(
+                {
+                    "time": float(row["rowDateRaw"]),
+                    "open": float(row["last_openRaw"]),
+                    "high": float(row["last_maxRaw"]),
+                    "low": float(row["last_minRaw"]),
+                    "close": float(row["last_closeRaw"]),
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    # Investing.com returns newest-first; the chart expects chronological order.
+    candles.sort(key=lambda c: c["time"])
+    return candles
+
+
+def _dedupe_by_period(candles: list[dict[str, Any]], interval: str) -> list[dict[str, Any]]:
+    """Merge candles that fall within the same period.
+
+    Yahoo's monthly endpoint sometimes returns BOTH a proper month-start
+    bar (e.g. Apr 1) AND a "current month so far" bar timestamped at the
+    latest intraday tick (e.g. Apr 23). The chart then renders a duplicate
+    candle for the current month. We collapse such pairs into one bar:
+      - earliest open
+      - max(highs)
+      - min(lows)
+      - latest close
+      - period-aligned timestamp (e.g. first of the month)
+    """
+    if not candles or interval not in {"1mo", "1w", "1d"}:
+        return candles
+
+    def bucket_key(ts: float) -> str:
+        d = datetime.fromtimestamp(ts, tz=timezone.utc)
+        if interval == "1mo":
+            return f"{d.year}-{d.month:02d}"
+        if interval == "1w":
+            iso = d.isocalendar()
+            return f"{iso[0]}-W{iso[1]:02d}"
+        return f"{d.year}-{d.month:02d}-{d.day:02d}"
+
+    def aligned_timestamp(ts: float) -> float:
+        d = datetime.fromtimestamp(ts, tz=timezone.utc)
+        if interval == "1mo":
+            return d.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+        if interval == "1w":
+            # Align to ISO Monday of that week
+            iso_year, iso_week, _ = d.isocalendar()
+            monday = datetime.fromisocalendar(iso_year, iso_week, 1).replace(tzinfo=timezone.utc)
+            return monday.timestamp()
+        return d.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for c in candles:
+        key = bucket_key(c["time"])
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(c)
+
+    merged: list[dict[str, Any]] = []
+    for key in order:
+        bucket = groups[key]
+        if len(bucket) == 1:
+            merged.append(bucket[0])
+            continue
+        bucket.sort(key=lambda c: c["time"])
+        merged.append(
+            {
+                "time": aligned_timestamp(bucket[0]["time"]),
+                "open": bucket[0]["open"],
+                "high": max(c["high"] for c in bucket),
+                "low": min(c["low"] for c in bucket),
+                "close": bucket[-1]["close"],
+            }
+        )
+    return merged
+
+
 async def _fetch_binance(client, symbol: str, interval: str, limit: int) -> list[dict[str, Any]]:
     b_interval = BINANCE_INTERVAL.get(interval, "1d")
     payload = await _safe_get_json(
@@ -533,15 +740,37 @@ async def get_history(
                 history = await _fetch_binance(client, "BTCUSDT", interval, CANDLE_LIMIT)
             except Exception as exc:
                 print(f"Binance BTC fetch failed ({interval}): {exc}")
+            history = _sanitize_candles(history)
             if not _valid_candles(history):
-                history = await _fetch_yahoo(client, YAHOO_SPOT_SYMBOLS["btc"], interval)
+                history = _sanitize_candles(
+                    await _fetch_yahoo(client, YAHOO_SPOT_SYMBOLS["btc"], interval)
+                )
         else:
-            spot_symbol = YAHOO_SPOT_SYMBOLS[asset]
-            history = await _fetch_yahoo(client, spot_symbol, interval)
+            # For gold/silver daily/weekly/monthly, prefer Investing.com — its
+            # spot XAU/XAG data matches TradingView/Kitco and never drops months
+            # the way Yahoo's GC=F/SI=F continuous futures do during contract
+            # rolls. Fall back to Yahoo spot, then Yahoo futures.
+            if interval in INVESTING_TIMEFRAME:
+                history = _sanitize_candles(await _fetch_investing(asset, interval))
+
+            if not _valid_candles(history):
+                spot_symbol = YAHOO_SPOT_SYMBOLS[asset]
+                history = _sanitize_candles(
+                    await _fetch_yahoo(client, spot_symbol, interval)
+                )
             if not _valid_candles(history):
                 fut_symbol = YAHOO_FUTURES_SYMBOLS[asset]
-                print(f"Yahoo spot {spot_symbol} empty for {interval}; falling back to {fut_symbol}")
-                history = await _fetch_yahoo(client, fut_symbol, interval)
+                print(
+                    f"Investing+Yahoo-spot empty for {asset} ({interval}); "
+                    f"falling back to {fut_symbol}"
+                )
+                history = _sanitize_candles(
+                    await _fetch_yahoo(client, fut_symbol, interval)
+                )
+
+        # Collapse same-period duplicates (e.g. Yahoo's stray current-month
+        # intraday candle on top of the month-start bar).
+        history = _dedupe_by_period(history, interval)
 
         if len(history) > CANDLE_LIMIT:
             history = history[-CANDLE_LIMIT:]
