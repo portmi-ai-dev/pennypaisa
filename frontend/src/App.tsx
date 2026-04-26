@@ -93,36 +93,66 @@ export default function App() {
   // wired up in the bullion onPointerOver/Out callbacks for future overlays.
   const [, setHoveredAsset] = useState<AssetKey | null>(null);
 
-  const [marketSentiment, setMarketSentiment] = useState<{
+  type Sentiment = {
     marketType: 'bull' | 'bear' | 'neutral';
     reasoning: string;
     cowenView: string;
     solowayView: string;
     lastUpdated?: string;
-  } | null>(null);
-  const [goldSentiment, setGoldSentiment] = useState<typeof marketSentiment>(null);
-  const [silverSentiment, setSilverSentiment] = useState<typeof marketSentiment>(null);
+    confidence?: 'low' | 'medium' | 'high';
+    horizon?: 'short-term' | 'medium-term' | 'long-term';
+    technicalSignal?: string;
+    macroContext?: string;
+    keyLevels?: { support?: string | null; resistance?: string | null } | null;
+    catalysts?: string[];
+    risks?: string[];
+  };
+
+  const [marketSentiment, setMarketSentiment] = useState<Sentiment | null>(null);
+  const [goldSentiment, setGoldSentiment] = useState<Sentiment | null>(null);
+  const [silverSentiment, setSilverSentiment] = useState<Sentiment | null>(null);
 
   const goldRef = useRef<THREE.Group>(null);
   const silverRef = useRef<THREE.Group>(null);
+
+  // Throttle per-asset hover fetches so repeated hovers within a window reuse
+  // the last in-flight or fresh result. Backend is Redis-cached too, but this
+  // avoids even issuing the HTTP call during rapid hover storms.
+  const hoverFetchTimes = useRef<Record<'gold' | 'silver' | 'bitcoin', number>>({
+    gold: 0,
+    silver: 0,
+    bitcoin: 0,
+  });
+  const HOVER_THROTTLE_MS = 10 * 60 * 1000;
+
+  // localStorage cache — used only for the initial aggregate hydrate.
+  // Shortened from 1h → 10min to match the backend Redis TTL so panels
+  // reflect current market conditions across reloads.
+  const STORAGE_KEY = 'market_sentiment_cache';
+  const CACHE_DURATION_MS = 10 * 60 * 1000;
 
   useEffect(() => {
     const timer = setTimeout(() => setIsLoading(false), 2000);
     return () => clearTimeout(timer);
   }, []);
 
-  const fetchSentiment = async () => {
-    const STORAGE_KEY = 'market_sentiment_cache';
-    const CACHE_DURATION = 60 * 60 * 1000;
+  const applyAggregate = (data: {
+    crypto?: Sentiment | null;
+    gold?: Sentiment | null;
+    silver?: Sentiment | null;
+  }) => {
+    if (data.crypto) setMarketSentiment(data.crypto);
+    if (data.gold) setGoldSentiment(data.gold);
+    if (data.silver) setSilverSentiment(data.silver);
+  };
 
+  const hydrateSentiments = async () => {
     try {
       const cached = localStorage.getItem(STORAGE_KEY);
       if (cached) {
         const { timestamp, data } = JSON.parse(cached);
-        if (Date.now() - timestamp < CACHE_DURATION) {
-          setMarketSentiment(data.crypto);
-          setGoldSentiment(data.gold);
-          setSilverSentiment(data.silver);
+        if (Date.now() - timestamp < CACHE_DURATION_MS) {
+          applyAggregate(data);
           return;
         }
       }
@@ -135,40 +165,44 @@ export default function App() {
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) return;
       const data = await response.json();
-      if (data?.crypto) setMarketSentiment(data.crypto);
-      if (data?.gold) setGoldSentiment(data.gold);
-      if (data?.silver) setSilverSentiment(data.silver);
+      applyAggregate(data);
 
       if (data?.crypto || data?.gold || data?.silver) {
         localStorage.setItem(
           STORAGE_KEY,
-          JSON.stringify({
-            timestamp: Date.now(),
-            data: {
-              crypto: data.crypto || marketSentiment,
-              gold: data.gold || goldSentiment,
-              silver: data.silver || silverSentiment,
-            },
-          }),
+          JSON.stringify({ timestamp: Date.now(), data }),
         );
       }
     } catch (error) {
-      console.error('Error fetching sentiment:', error);
-      const fallback = {
-        marketType: 'bull' as const,
-        reasoning: 'Market showing strong resilience above key support levels.',
-        cowenView: 'Watching the bull market support band closely.',
-        solowayView: 'Technical breakout confirmed on the weekly chart.',
-      };
-      setMarketSentiment(fallback);
-      setGoldSentiment(fallback);
-      setSilverSentiment(fallback);
+      console.error('Error fetching aggregate sentiment:', error);
+    }
+  };
+
+  // Per-asset fetch triggered by bullion hover. Maps the UI key
+  // ('gold' | 'silver' | 'bitcoin') to the backend's asset slug.
+  const fetchSentimentFor = async (asset: 'gold' | 'silver' | 'bitcoin') => {
+    const now = Date.now();
+    if (now - hoverFetchTimes.current[asset] < HOVER_THROTTLE_MS) return;
+    hoverFetchTimes.current[asset] = now;
+
+    const slug = asset === 'bitcoin' ? 'crypto' : asset;
+    try {
+      const response = await fetch(`/api/intel/sentiment/${slug}`);
+      if (!response.ok) return;
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) return;
+      const data: Sentiment = await response.json();
+      if (asset === 'gold') setGoldSentiment(data);
+      else if (asset === 'silver') setSilverSentiment(data);
+      else setMarketSentiment(data);
+    } catch (error) {
+      console.warn(`Hover sentiment fetch failed (${asset}):`, error);
     }
   };
 
   // ── Fetch market sentiment via backend ──
   useEffect(() => {
-    void fetchSentiment();
+    void hydrateSentiments();
   }, []);
 
   // ── Fetch real-time prices from backend ──
@@ -312,7 +346,7 @@ export default function App() {
                       onPointerOver={() => {
                         if (!morphedGold) document.body.style.cursor = 'pointer';
                         setHoveredAsset('gold');
-                        void fetchSentiment();
+                        void fetchSentimentFor('gold');
                       }}
                       onPointerOut={() => {
                         document.body.style.cursor = 'auto';
@@ -338,7 +372,7 @@ export default function App() {
                       onPointerOver={() => {
                         if (!morphedSilver) document.body.style.cursor = 'pointer';
                         setHoveredAsset('silver');
-                        void fetchSentiment();
+                        void fetchSentimentFor('silver');
                       }}
                       onPointerOut={() => {
                         document.body.style.cursor = 'auto';
@@ -363,6 +397,7 @@ export default function App() {
                       changePercent={btcChangePercent}
                       weeklyChangePercent={btcWeeklyChangePercent}
                       onClick={() => setShowBlockchain(!showBlockchain)}
+                      onHoverIntelligence={() => void fetchSentimentFor('bitcoin')}
                       isBlockchainExpanded={showBlockchain}
                       marketCap={btcMarketCap}
                       dominance={btcDominance}

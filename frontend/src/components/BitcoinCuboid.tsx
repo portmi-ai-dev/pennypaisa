@@ -14,6 +14,11 @@ interface BitcoinCuboidProps {
   changePercent: number;
   weeklyChangePercent?: number;
   onClick?: () => void;
+  /**
+   * Fires when the user begins hovering the cuboid. Used to lazily fetch the
+   * latest BTC market intelligence so the floating panel reads fresh data.
+   */
+  onHoverIntelligence?: () => void;
   isBlockchainExpanded?: boolean;
   marketCap?: number;
   dominance?: number;
@@ -223,12 +228,13 @@ const BoosterEffect = ({ intensity }: { intensity: number }) => {
   );
 };
 
-export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({ 
-  visible, 
-  price, 
-  changePercent, 
+export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
+  visible,
+  price,
+  changePercent,
   weeklyChangePercent = 0,
-  onClick, 
+  onClick,
+  onHoverIntelligence,
   isBlockchainExpanded = false,
   marketCap = 1280000000000,
   dominance = 52.5,
@@ -340,6 +346,7 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
                   soundManager.playRuffle();
                 }
                 setHoveredLogo(true);
+                onHoverIntelligence?.();
               }
             }}
             onPointerOut={(e) => {

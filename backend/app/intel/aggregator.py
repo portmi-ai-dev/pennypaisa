@@ -1,17 +1,30 @@
 """Aggregate Gemini-generated sentiment across assets."""
 
+from __future__ import annotations
+
 import asyncio
+import logging
 from datetime import datetime, timezone
+from typing import Literal
 
 import httpx
 
+from app.intel import cache
 from app.intel.btc import fetch_crypto_sentiment
 from app.intel.gold import fetch_gold_sentiment
 from app.intel.silver import fetch_silver_sentiment
-from app.models.intel import IntelSentimentResponse
+from app.models.intel import AssetSentiment, IntelSentimentResponse
 from app.services.aggregator import aggregate_prices
 
+logger = logging.getLogger(__name__)
 
+Asset = Literal["gold", "silver", "crypto"]
+
+_FETCHERS = {
+    "gold": fetch_gold_sentiment,
+    "silver": fetch_silver_sentiment,
+    "crypto": fetch_crypto_sentiment,
+}
 
 
 def current_timestamp() -> str:
@@ -19,9 +32,18 @@ def current_timestamp() -> str:
 
 
 async def aggregate_sentiments(client: httpx.AsyncClient) -> IntelSentimentResponse:
-    """Fetch prices once, then sentiment for crypto, gold, and silver."""
+    """Fetch live prices once, then sentiment for crypto, gold, and silver.
+
+    Sentiment fetches run in parallel and each honours the Redis cache, so
+    frequent calls from the frontend are cheap.
+    """
     prices = await aggregate_prices(client)
-    print(f"Intel price snapshot: {prices}")
+    logger.info(
+        "Intel price snapshot — gold=%s silver=%s btc=%s",
+        prices.get("gold"),
+        prices.get("silver"),
+        prices.get("btc"),
+    )
 
     crypto, gold, silver = await asyncio.gather(
         fetch_crypto_sentiment(prices),
@@ -35,3 +57,25 @@ async def aggregate_sentiments(client: httpx.AsyncClient) -> IntelSentimentRespo
         silver=silver,
         timestamp=current_timestamp(),
     )
+
+
+async def fetch_asset_sentiment(
+    client: httpx.AsyncClient,
+    asset: Asset,
+    *,
+    force_refresh: bool = False,
+) -> AssetSentiment | None:
+    """Fetch sentiment for a single asset — used by the hover endpoint.
+
+    Only aggregates price data if we can't serve from cache, so a cache hit
+    is near-instant and safe to call on every hover.
+    """
+    if not force_refresh:
+        cached = await cache.get_cached(asset)
+        if cached is not None:
+            return cached
+
+    # Cache miss (or forced refresh) — fetch fresh prices and regenerate.
+    prices = await aggregate_prices(client)
+    fetcher = _FETCHERS[asset]
+    return await fetcher(prices=prices, use_cache=False)
