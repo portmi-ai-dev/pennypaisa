@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { openChartTab, type AssetKey, type Prices } from '../lib/marketData';
 
-export type PageId = 'landing' | 'intelligence' | 'chat';
+export type PageId = 'landing' | 'intelligence' | 'flow' | 'chat';
 
 export interface NavItem {
   id: PageId;
@@ -28,10 +28,22 @@ const IconChat = (
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
   </svg>
 );
+// Capital Flow — three nodes connected by curved lines, evoking the rotation graph.
+const IconFlow = (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+    <circle cx="5" cy="6" r="2" />
+    <circle cx="19" cy="6" r="2" />
+    <circle cx="12" cy="19" r="2" />
+    <path d="M7 6 Q 12 2 17 6" />
+    <path d="M6.5 8 Q 8 14 10.5 17.5" />
+    <path d="M17.5 8 Q 16 14 13.5 17.5" />
+  </svg>
+);
 
 export const NAV_ITEMS: NavItem[] = [
   { id: 'landing', label: 'Assets', accent: '#d4a843', icon: IconAssets },
   { id: 'intelligence', label: 'Intelligence', accent: '#4a8fe8', icon: IconIntel },
+  { id: 'flow', label: 'Capital Flow', accent: '#48c09e', icon: IconFlow },
   { id: 'chat', label: 'Smart Assets', accent: '#9b72cf', icon: IconChat },
 ];
 
