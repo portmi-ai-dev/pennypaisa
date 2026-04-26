@@ -2,10 +2,7 @@
 
 from typing import Any
 
-from app.core.config import settings
-from app.intel import cache
-from app.intel.prompts import build_prompt
-from app.intel.utils import generate_sentiment
+from app.intel._common import generate_and_cache, get_or_swr
 from app.models.intel import AssetSentiment
 
 
@@ -14,20 +11,9 @@ async def fetch_gold_sentiment(
     *,
     use_cache: bool = True,
 ) -> AssetSentiment | None:
-    """Fetch analyst-grade gold sentiment, honouring the Postgres cache."""
+    """Fetch analyst-grade gold sentiment with stale-while-revalidate."""
     if use_cache:
-        cached = await cache.get_cached("gold")
+        cached = await get_or_swr("gold", prices)
         if cached is not None:
             return cached
-
-    prompt = build_prompt("gold", prices)
-    sentiment, raw = await generate_sentiment(prompt)
-    if sentiment is not None:
-        await cache.set_cached(
-            "gold",
-            sentiment,
-            prompt=prompt,
-            raw_response=raw,
-            model=settings.GEMINI_MODEL,
-        )
-    return sentiment
+    return await generate_and_cache("gold", prices)

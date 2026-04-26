@@ -5,11 +5,11 @@ Two tables, two responsibilities:
 * ``intel_sentiment_cache`` — one row per asset, UPSERTed on every fresh
   generation. Served on the hover hot path; TTL enforced via ``expires_at``.
 * ``intel_sentiment_history`` — append-only audit log of every Gemini call,
-  capturing the exact prompt and parsed/raw response for analytics and
+  capturing prompt + parsed/raw response + token usage for analytics and
   potential fine-tuning. Never read on the hot path.
 
-Keeping cache and history apart means hover reads stay a single PK lookup
-even as the history table grows unboundedly.
+``ADD COLUMN IF NOT EXISTS`` keeps this safe to re-run on existing
+deployments where earlier columns are already present.
 """
 
 from __future__ import annotations
@@ -39,13 +39,18 @@ CREATE TABLE IF NOT EXISTS intel_sentiment_history (
     generated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE intel_sentiment_history
+    ADD COLUMN IF NOT EXISTS prompt_tokens     INTEGER,
+    ADD COLUMN IF NOT EXISTS completion_tokens INTEGER,
+    ADD COLUMN IF NOT EXISTS total_tokens      INTEGER;
+
 CREATE INDEX IF NOT EXISTS idx_intel_history_asset_time
     ON intel_sentiment_history (asset, generated_at DESC);
 """
 
 
 async def ensure_schema() -> None:
-    """Create the cache + history tables if they don't already exist."""
+    """Create / patch the cache + history tables."""
     try:
         async with get_db() as conn:
             await conn.execute(_DDL)

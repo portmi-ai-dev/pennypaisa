@@ -4,6 +4,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from app.core.rate_limit import limiter
 from app.intel.aggregator import aggregate_sentiments, fetch_asset_sentiment
 from app.models.intel import AssetSentiment, IntelSentimentResponse
 
@@ -21,6 +22,7 @@ _ASSET_ALIASES: dict[str, Literal["gold", "silver", "crypto"]] = {
 
 
 @router.get("/intel/sentiment", response_model=IntelSentimentResponse)
+@limiter.limit("30/minute")
 async def get_sentiment(request: Request) -> IntelSentimentResponse:
     """Return the latest Gemini-driven sentiment for all assets."""
     try:
@@ -36,6 +38,7 @@ async def get_sentiment(request: Request) -> IntelSentimentResponse:
 
 
 @router.get("/intel/sentiment/{asset}", response_model=AssetSentiment)
+@limiter.limit("60/minute")
 async def get_asset_sentiment(
     asset: Asset,
     request: Request,

@@ -9,7 +9,7 @@ from typing import Literal
 
 import httpx
 
-from app.intel import cache
+from app.intel._common import get_or_swr
 from app.intel.btc import fetch_crypto_sentiment
 from app.intel.gold import fetch_gold_sentiment
 from app.intel.silver import fetch_silver_sentiment
@@ -71,7 +71,9 @@ async def fetch_asset_sentiment(
     is near-instant and safe to call on every hover.
     """
     if not force_refresh:
-        cached = await cache.get_cached(asset)
+        # get_or_swr unpacks the (sentiment, is_stale) tuple cache.get_cached
+        # returns and schedules a background refresh when the row is stale.
+        cached = await get_or_swr(asset, prices=None)
         if cached is not None:
             return cached
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -25,6 +26,34 @@ from pydantic import ValidationError
 from app.core.config import settings
 from app.core.gemini import get_gemini_client
 from app.models.intel import AssetSentiment, KeyLevels
+
+
+@dataclass(slots=True)
+class GenerationResult:
+    """What ``generate_sentiment`` hands back to fetchers + history writer."""
+
+    sentiment: AssetSentiment | None
+    raw_text: str | None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | None]:
+    """Pull ``(prompt, completion, total)`` token counts from a Gemini response.
+
+    The google-genai SDK exposes these on ``response.usage_metadata``. Fields
+    are optional — different models / grounding modes may omit some — so we
+    return None for anything missing rather than fail.
+    """
+    meta = getattr(response, "usage_metadata", None)
+    if meta is None:
+        return None, None, None
+    return (
+        getattr(meta, "prompt_token_count", None),
+        getattr(meta, "candidates_token_count", None),
+        getattr(meta, "total_token_count", None),
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -221,15 +250,14 @@ def _build_config() -> types.GenerateContentConfig:
     )
 
 
-async def generate_sentiment(
-    prompt: str,
-) -> tuple[AssetSentiment | None, str | None]:
-    """Run the prompt through Gemini and return ``(sentiment, raw_text)``.
+async def generate_sentiment(prompt: str) -> GenerationResult:
+    """Run the prompt through Gemini and return parsed sentiment + metadata.
 
-    Returns ``(None, raw_or_None)`` on any failure — the aggregator treats
-    missing assets as optional so a partial response is better than a 5xx.
-    The raw text is returned (when available) so callers can persist it
-    in the history table for future analysis even when parsing fails.
+    Returns a ``GenerationResult`` with ``sentiment=None`` on any failure —
+    the aggregator treats missing assets as optional so a partial response
+    is better than a 5xx. Raw text and token usage are returned (when
+    available) so callers can persist them in the history table for
+    analytics even when parsing fails.
     """
     if not settings.GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY is not configured")
@@ -245,19 +273,34 @@ async def generate_sentiment(
         )
     except Exception as exc:
         logger.warning("Gemini sentiment call failed: %s", exc)
-        return None, None
+        return GenerationResult(sentiment=None, raw_text=None)
 
+    prompt_toks, completion_toks, total_toks = _extract_token_usage(response)
     text = response.text or ""
     if not text.strip():
         logger.warning("Gemini returned an empty response")
-        return None, None
+        return GenerationResult(
+            sentiment=None,
+            raw_text=None,
+            prompt_tokens=prompt_toks,
+            completion_tokens=completion_toks,
+            total_tokens=total_toks,
+        )
 
     try:
-        return _parse_sentiment(text), text
+        sentiment = _parse_sentiment(text)
     except (json.JSONDecodeError, ValidationError, ValueError) as exc:
         logger.warning(
             "Gemini response failed validation: %s | raw=%s",
             exc,
             text[:400],
         )
-        return None, text
+        sentiment = None
+
+    return GenerationResult(
+        sentiment=sentiment,
+        raw_text=text,
+        prompt_tokens=prompt_toks,
+        completion_tokens=completion_toks,
+        total_tokens=total_toks,
+    )
