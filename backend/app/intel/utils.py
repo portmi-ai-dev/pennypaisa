@@ -221,11 +221,15 @@ def _build_config() -> types.GenerateContentConfig:
     )
 
 
-async def generate_sentiment(prompt: str) -> AssetSentiment | None:
-    """Run the prompt through Gemini and return a validated sentiment payload.
+async def generate_sentiment(
+    prompt: str,
+) -> tuple[AssetSentiment | None, str | None]:
+    """Run the prompt through Gemini and return ``(sentiment, raw_text)``.
 
-    Returns None (not raises) on any failure — the aggregator treats missing
-    assets as optional so a partial response is better than a 5xx.
+    Returns ``(None, raw_or_None)`` on any failure — the aggregator treats
+    missing assets as optional so a partial response is better than a 5xx.
+    The raw text is returned (when available) so callers can persist it
+    in the history table for future analysis even when parsing fails.
     """
     if not settings.GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY is not configured")
@@ -241,19 +245,19 @@ async def generate_sentiment(prompt: str) -> AssetSentiment | None:
         )
     except Exception as exc:
         logger.warning("Gemini sentiment call failed: %s", exc)
-        return None
+        return None, None
 
     text = response.text or ""
     if not text.strip():
         logger.warning("Gemini returned an empty response")
-        return None
+        return None, None
 
     try:
-        return _parse_sentiment(text)
+        return _parse_sentiment(text), text
     except (json.JSONDecodeError, ValidationError, ValueError) as exc:
         logger.warning(
             "Gemini response failed validation: %s | raw=%s",
             exc,
             text[:400],
         )
-        return None
+        return None, text

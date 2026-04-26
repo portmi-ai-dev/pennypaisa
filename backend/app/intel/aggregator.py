@@ -34,8 +34,8 @@ def current_timestamp() -> str:
 async def aggregate_sentiments(client: httpx.AsyncClient) -> IntelSentimentResponse:
     """Fetch live prices once, then sentiment for crypto, gold, and silver.
 
-    Sentiment fetches run in parallel and each honours the Redis cache, so
-    frequent calls from the frontend are cheap.
+    Sentiment fetches run in parallel and each honours the Postgres cache,
+    so frequent calls from the frontend are cheap.
     """
     prices = await aggregate_prices(client)
     logger.info(
