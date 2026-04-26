@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'motion/react';
 
 import { AppHeader, type PageId } from './components/AppHeader';
 import { IntelligencePage } from './components/IntelligencePage';
+import { CapitalFlowPage } from './components/CapitalFlowPage';
 import { ChatPage } from './components/ChatPage';
 import { ChartPage } from './components/ChartPage';
 import { type Prices, type AssetKey, type Sentiments } from './lib/marketData';
@@ -622,6 +623,19 @@ export default function App() {
           }}
         >
           <IntelligencePage prices={prices} />
+        </div>
+
+        {/* Capital Flow */}
+        <div
+          style={{
+            display: page === 'flow' ? 'block' : 'none',
+            width: '100%',
+            height: '100%',
+            position: 'absolute',
+            inset: 0,
+          }}
+        >
+          <CapitalFlowPage prices={prices} />
         </div>
 
         {/* Smart Assets / Chat */}
