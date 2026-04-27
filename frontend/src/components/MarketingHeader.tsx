@@ -34,6 +34,26 @@ const APP_DROPDOWN_ITEMS: { label: string; to: string; accent: string; tagline: 
   { label: 'Smart Assets', to: '/app/smart_asset', accent: '#9b72cf', tagline: 'Talk to the assets' },
 ];
 
+// Per-pill submenu options. Bare pill click → base path (defaults to gold);
+// option click → base path + ?asset=<slug> consumed by the destination page.
+interface SubmenuOption {
+  label: string;
+  asset: string;
+  accent: string;
+  tagline?: string;
+}
+const INTEL_SUBMENU: SubmenuOption[] = [
+  { label: 'Gold', asset: 'gold', accent: '#d4a843' },
+  { label: 'Silver', asset: 'silver', accent: '#b8c4cc' },
+  { label: 'Bitcoin', asset: 'btc', accent: '#f7931a' },
+];
+const SMART_SUBMENU: SubmenuOption[] = [
+  { label: 'Gold', asset: 'gold', accent: '#d4a843' },
+  { label: 'Silver', asset: 'silver', accent: '#b8c4cc' },
+  { label: 'Bitcoin', asset: 'btc', accent: '#f7931a' },
+  { label: 'Roundtable', asset: 'roundtable', accent: '#9b72cf', tagline: 'All three in conversation' },
+];
+
 const PillItem: React.FC<{ item: NavLink; active: boolean }> = ({ item, active }) => {
   const [hover, setHover] = React.useState(false);
   const bg = active
@@ -80,6 +100,144 @@ const PillItem: React.FC<{ item: NavLink; active: boolean }> = ({ item, active }
 
   if (item.to) return <Link to={item.to} style={{ textDecoration: 'none' }}>{content}</Link>;
   return <a href={item.href ?? '#'} style={{ textDecoration: 'none' }}>{content}</a>;
+};
+
+// In-app pill with a hover submenu (Intelligence ▾ / Smart Assets ▾).
+// Clicking the pill itself goes to ``item.to`` with no query — the destination
+// page falls back to its default. Clicking a submenu option goes to the same
+// path with ``?asset=<slug>`` so the page boots into that view.
+const PillMenu: React.FC<{
+  item: NavLink;
+  active: boolean;
+  options: SubmenuOption[];
+}> = ({ item, active, options }) => {
+  const [open, setOpen] = React.useState(false);
+  const closeTimer = React.useRef<number | null>(null);
+  const handleEnter = () => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    setOpen(true);
+  };
+  const handleLeave = () => {
+    // Match the AppDropdown's traverse delay so the panel doesn't collapse
+    // while the pointer crosses the gap between trigger and panel.
+    closeTimer.current = window.setTimeout(() => setOpen(false), 120);
+  };
+
+  const bg = active
+    ? 'rgba(255,255,255,0.10)'
+    : open
+      ? 'rgba(255,255,255,0.06)'
+      : 'transparent';
+  const color = active || open ? '#f3ecdc' : 'rgba(255,255,255,0.78)';
+
+  return (
+    <div onMouseEnter={handleEnter} onMouseLeave={handleLeave} style={{ position: 'relative' }}>
+      <Link
+        to={item.to ?? '#'}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '8px 14px',
+          borderRadius: 999,
+          fontFamily: 'DM Sans, sans-serif',
+          fontSize: 14,
+          fontWeight: active ? 600 : 500,
+          color,
+          textDecoration: 'none',
+          transition: 'color 0.15s, background 0.15s',
+          background: bg,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {item.label}
+        <ChevronDown
+          size={14}
+          strokeWidth={2}
+          style={{
+            opacity: 0.6,
+            transform: open ? 'rotate(180deg)' : 'none',
+            transition: 'transform 0.18s',
+          }}
+        />
+      </Link>
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 10px)',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            minWidth: 220,
+            padding: 8,
+            borderRadius: 14,
+            background: 'rgba(14,14,22,0.92)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            backdropFilter: 'blur(24px)',
+            WebkitBackdropFilter: 'blur(24px)',
+            boxShadow:
+              '0 14px 40px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+          }}
+        >
+          {options.map((o) => (
+            <Link
+              key={o.asset}
+              to={`${item.to}?asset=${o.asset}`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '10px 12px',
+                borderRadius: 10,
+                textDecoration: 'none',
+                color: '#e8e0d0',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = 'rgba(255,255,255,0.05)')
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = 'transparent')
+              }
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 2,
+                  background: o.accent,
+                  boxShadow: `0 0 8px ${o.accent}66`,
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: 14, fontWeight: 500, lineHeight: 1.2 }}>
+                  {o.label}
+                </span>
+                {o.tagline && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: 'rgba(255,255,255,0.45)',
+                      marginTop: 2,
+                    }}
+                  >
+                    {o.tagline}
+                  </span>
+                )}
+              </span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 };
 
 // Marketing-only: a single "App ▾" pill that hover-opens to reveal the four
@@ -354,13 +512,30 @@ export const MarketingHeader: React.FC<Props> = ({ prices, loading, variant = 'm
         }}
       >
         {isApp ? (
-          NAV_APP.map((item) => (
-            <PillItem
-              key={item.label}
-              item={item}
-              active={!!item.to && pathname === item.to}
-            />
-          ))
+          NAV_APP.map((item) => {
+            const isActive = !!item.to && pathname === item.to;
+            if (item.hasMenu && item.label === 'Intelligence') {
+              return (
+                <PillMenu
+                  key={item.label}
+                  item={item}
+                  active={isActive}
+                  options={INTEL_SUBMENU}
+                />
+              );
+            }
+            if (item.hasMenu && item.label === 'Smart Assets') {
+              return (
+                <PillMenu
+                  key={item.label}
+                  item={item}
+                  active={isActive}
+                  options={SMART_SUBMENU}
+                />
+              );
+            }
+            return <PillItem key={item.label} item={item} active={isActive} />;
+          })
         ) : (
           <>
             <AppDropdown />

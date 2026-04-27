@@ -1,6 +1,20 @@
 import * as React from 'react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { ASSET_CONFIG, openChartTab, type AssetKey, type Prices } from '../lib/marketData';
+
+// Submenu uses ``btc`` as the slug; the page's internal key is ``bitcoin``.
+const QUERY_TO_ASSET: Record<string, AssetKey> = {
+  gold: 'gold',
+  silver: 'silver',
+  btc: 'bitcoin',
+  bitcoin: 'bitcoin',
+};
+
+function assetFromSearch(search: string): AssetKey {
+  const param = new URLSearchParams(search).get('asset')?.toLowerCase();
+  return (param && QUERY_TO_ASSET[param]) || 'gold';
+}
 
 interface Condition {
   text: string;
@@ -73,7 +87,17 @@ interface Props {
 }
 
 export const IntelligencePage: React.FC<Props> = ({ prices }) => {
-  const [activeAsset, setActiveAsset] = useState<AssetKey>('gold');
+  const location = useLocation();
+  const [activeAsset, setActiveAsset] = useState<AssetKey>(() =>
+    assetFromSearch(location.search),
+  );
+
+  // Re-sync when the dropdown switches the URL while we're already mounted
+  // (the page is kept alive via display:none, so navigation between
+  // ?asset=gold and ?asset=silver doesn't remount).
+  useEffect(() => {
+    setActiveAsset(assetFromSearch(location.search));
+  }, [location.search]);
 
   const cfg = ASSET_CONFIG[activeAsset];
   const cond = COND[activeAsset];

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   ASSET_CONFIG,
   openChartTab,
@@ -173,9 +174,39 @@ interface Props {
   sentiments?: Sentiments;
 }
 
+// Submenu uses ``btc`` as the slug; the page's internal key is ``bitcoin``.
+const QUERY_TO_ASSET: Record<string, AssetKey> = {
+  gold: 'gold',
+  silver: 'silver',
+  btc: 'bitcoin',
+  bitcoin: 'bitcoin',
+};
+
+// Derive (mode, active) from a ``?asset=`` query string. ``roundtable``
+// flips mode without touching the active character; any asset slug puts us
+// in 1:1 mode pointed at that asset; missing/unknown → defaults.
+function viewFromSearch(search: string): { mode: ChatMode; active: AssetKey | null } {
+  const param = new URLSearchParams(search).get('asset')?.toLowerCase();
+  if (param === 'roundtable') return { mode: 'roundtable', active: null };
+  if (param && QUERY_TO_ASSET[param]) return { mode: 'one-on-one', active: QUERY_TO_ASSET[param] };
+  return { mode: 'one-on-one', active: null };
+}
+
 export const ChatPage: React.FC<Props> = ({ prices, sentiments }) => {
-  const [mode, setMode] = useState<ChatMode>('one-on-one');
-  const [active, setActive] = useState<AssetKey>('gold');
+  const location = useLocation();
+  const initialView = viewFromSearch(location.search);
+  const [mode, setMode] = useState<ChatMode>(initialView.mode);
+  const [active, setActive] = useState<AssetKey>(initialView.active ?? 'gold');
+
+  // Re-sync when the navbar dropdown switches the URL while we're already
+  // mounted. Only updates state for fields the URL actually pins — leaving a
+  // null ``active`` (e.g. ?asset=roundtable) preserves whichever character
+  // was last selected for when the user flips back to 1:1.
+  useEffect(() => {
+    const v = viewFromSearch(location.search);
+    setMode(v.mode);
+    if (v.active) setActive(v.active);
+  }, [location.search]);
   const [messages, setMessages] = useState<Record<AssetKey, Message[]>>({
     gold: [{ role: 'assistant', content: CHAR.gold.greeting }],
     silver: [{ role: 'assistant', content: CHAR.silver.greeting }],
