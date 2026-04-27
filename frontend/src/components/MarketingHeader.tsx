@@ -108,7 +108,8 @@ const AppDropdown: React.FC = () => {
       onMouseLeave={handleLeave}
       style={{ position: 'relative' }}
     >
-      <span
+      <Link
+        to="/app"
         style={{
           display: 'inline-flex',
           alignItems: 'center',
@@ -121,7 +122,7 @@ const AppDropdown: React.FC = () => {
           color: open ? '#f3ecdc' : 'rgba(255,255,255,0.78)',
           background: open ? 'rgba(255,255,255,0.10)' : 'transparent',
           transition: 'color 0.15s, background 0.15s',
-          cursor: 'pointer',
+          textDecoration: 'none',
           whiteSpace: 'nowrap',
         }}
       >
@@ -135,7 +136,7 @@ const AppDropdown: React.FC = () => {
             transition: 'transform 0.18s',
           }}
         />
-      </span>
+      </Link>
       {open && (
         <div
           style={{
