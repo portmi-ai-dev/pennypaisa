@@ -10,6 +10,7 @@ import { GoldBullion } from '../components/GoldBullion';
 import { SilverBullion } from '../components/SilverBullion';
 import { Tether } from '../components/Tether';
 import { BitcoinCuboid } from '../components/BitcoinCuboid';
+import { CursorBackground } from '../components/CursorBackground';
 import { soundManager } from '../lib/sounds';
 import { type AssetKey, type AssetSentiment, type Prices } from '../lib/marketData';
 
@@ -116,6 +117,11 @@ export const AssetPage: React.FC<AssetPageProps> = ({
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      {/* Cursor-reactive shimmer behind the canvas. The Canvas's default
+          alpha:true clear lets this show through everywhere the 3D scene
+          isn't actively painting. */}
+      <CursorBackground />
+
       <div className="absolute inset-0 z-0">
         <Canvas
           shadows
