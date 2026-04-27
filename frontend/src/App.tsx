@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useState, useRef, useEffect, Suspense } from 'react';
+import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, OrbitControls, ContactShadows } from '@react-three/drei';
 import * as THREE from 'three';
@@ -11,12 +12,32 @@ import { ArrowLeft } from 'lucide-react';
 import { soundManager } from './lib/sounds';
 import { motion, AnimatePresence } from 'motion/react';
 
-import { AppHeader, type PageId } from './components/AppHeader';
+import { MarketingHeader } from './components/MarketingHeader';
 import { IntelligencePage } from './components/IntelligencePage';
 import { CapitalFlowPage } from './components/CapitalFlowPage';
 import { ChatPage } from './components/ChatPage';
 import { ChartPage } from './components/ChartPage';
+import { MarketingLanding } from './components/MarketingLanding';
 import { type Prices, type AssetKey, type Sentiments } from './lib/marketData';
+
+export type PageId = 'landing' | 'intelligence' | 'flow' | 'chat';
+
+// URL <-> internal page id mapping. The product pages all share one AppShell
+// so the WebGL canvas survives navigation between them. The `/app` prefix
+// keeps product routes namespaced apart from future top-level pages
+// (`/login`, `/pricing`, etc.).
+export const PATH_TO_PAGE: Record<string, PageId> = {
+  '/app/asset': 'landing',
+  '/app/intel': 'intelligence',
+  '/app/capflow': 'flow',
+  '/app/smart_asset': 'chat',
+};
+export const PAGE_TO_PATH: Record<PageId, string> = {
+  landing: '/app/asset',
+  intelligence: '/app/intel',
+  flow: '/app/capflow',
+  chat: '/app/smart_asset',
+};
 
 // If the URL contains ?chart=<asset>, this tab is a dedicated full-screen
 // candlestick view. Resolved once at module load — the URL doesn't change
@@ -45,22 +66,10 @@ function ChartTabApp({ asset }: { asset: AssetKey }) {
   return <ChartPage asset={asset} />;
 }
 
-export default function App() {
-  // Standalone chart tab: detected at module load, so the early return is safe
-  // (no hooks are declared above this in the App component).
-  if (CHART_TAB_ASSET) {
-    return <ChartTabApp asset={CHART_TAB_ASSET} />;
-  }
-
-  // ── Page routing ──
-  const [page, setPage] = useState<PageId>(() => {
-    if (typeof window === 'undefined') return 'landing';
-    const stored = window.localStorage.getItem('gilver_page') as PageId | null;
-    return stored && ['landing', 'intelligence', 'chat'].includes(stored) ? stored : 'landing';
-  });
-  useEffect(() => {
-    window.localStorage.setItem('gilver_page', page);
-  }, [page]);
+function AppShell() {
+  // ── Page routing (URL is the source of truth) ──
+  const location = useLocation();
+  const page: PageId = PATH_TO_PAGE[location.pathname] ?? 'landing';
 
   // ── Market data state (preserved from previous app) ──
   const [goldPrice, setGoldPrice] = useState(2150);
@@ -300,7 +309,7 @@ export default function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100vh', background: '#06060e', overflow: 'hidden' }}>
-      <AppHeader page={page} setPage={setPage} prices={prices} loading={isLoading} />
+      <MarketingHeader prices={prices} loading={isLoading} variant="app" />
 
       <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {/* Landing — Three.js scene stays mounted to preserve WebGL context */}
@@ -661,5 +670,26 @@ export default function App() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  // Standalone chart tab: detected at module load before any router state.
+  // The chart tab opens via window.open(...?chart=<asset>) and replaces the
+  // whole document — never participates in routing.
+  if (CHART_TAB_ASSET) {
+    return <ChartTabApp asset={CHART_TAB_ASSET} />;
+  }
+
+  return (
+    <Routes>
+      <Route path="/" element={<MarketingLanding />} />
+      <Route path="/app" element={<Navigate to="/app/asset" replace />} />
+      <Route path="/app/asset" element={<AppShell />} />
+      <Route path="/app/intel" element={<AppShell />} />
+      <Route path="/app/capflow" element={<AppShell />} />
+      <Route path="/app/smart_asset" element={<AppShell />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
