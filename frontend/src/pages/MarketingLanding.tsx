@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { ArrowRight, Sparkles, Activity, Workflow, MessageSquare } from 'lucide-react';
-import { MarketingHeader } from './MarketingHeader';
+import { MarketingHeader } from '../components/MarketingHeader';
 import { usePrices } from '../lib/usePrices';
 
 const PILLARS = [

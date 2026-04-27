@@ -1,4 +1,40 @@
-# UI change log — URL routing + marketing landing + unified navbar
+# UI change log — URL routing + marketing landing + unified navbar + file-per-page split
+
+## File / folder layout (current)
+
+```
+frontend/src/
+├── App.tsx                       (routes + chart-tab early return — slim)
+├── main.tsx                      (BrowserRouter + render root)
+├── index.css
+├── pages/                        (one file per route)
+│   ├── AssetPage.tsx             (3D bullion scene — /app/asset)
+│   ├── IntelligencePage.tsx      (/app/intel)
+│   ├── CapitalFlowPage.tsx       (/app/capflow)
+│   ├── ChatPage.tsx              (/app/smart_asset)
+│   ├── ChartPage.tsx             (?chart=<asset> standalone tab)
+│   └── MarketingLanding.tsx      (/)
+├── components/                   (reusable UI building blocks)
+│   ├── AppShell.tsx              (in-app layout: header + page switch + shared state)
+│   ├── MarketingHeader.tsx       (unified header — marketing + app variants)
+│   ├── GoldBullion.tsx           (3D primitive)
+│   ├── SilverBullion.tsx         (3D primitive)
+│   ├── BitcoinCuboid.tsx         (3D primitive)
+│   ├── Tether.tsx                (3D primitive)
+│   ├── BlockchainNode.tsx
+│   ├── BlockchainTether.tsx
+│   ├── SafeHavenCoin.tsx
+│   ├── CandlestickChart.tsx
+│   └── USDBearishAnimation.tsx
+└── lib/
+    ├── routes.ts                 (PageId + PATH_TO_PAGE)
+    ├── marketData.ts             (types + asset config + helpers)
+    ├── usePrices.ts              (lightweight hook — used by MarketingLanding)
+    ├── capitalFlowData.ts
+    ├── cryptoLogos.ts
+    └── sounds.ts
+```
+
 
 ## Final route map
 
@@ -116,27 +152,59 @@ The "open candlestick in new tab" path checks for `?chart=…` at module load,
 before the router mounts, and renders `ChartPage` standalone. Behavior is
 identical to before. Tickers in the new header still call `openChartTab(asset)`.
 
+### 7. File-per-page refactor
+
+`App.tsx` was nearly 700 lines because the 3D bullion scene + all the shared
+shell state lived inline next to the router. Split into:
+
+- **`pages/AssetPage.tsx`** (new) — the 3D bullion scene. Owns scene-local
+  state (`isMerged`, `morphedGold`, `morphedSilver`, `showBitcoin`,
+  `showBlockchain`, hover tracking, the gold/silver three refs, the
+  `AnimatedBullion` helper). Receives all market data + sentiments + a
+  `fetchSentimentFor(asset)` callback as props from `AppShell`.
+- **`components/AppShell.tsx`** (new) — the in-app layout. Owns shared state
+  that all four product pages need (price fetch loop, sentiment hydrate +
+  per-asset hover fetch, `Prices` derived object) and renders the four pages
+  in absolutely-positioned divs toggled by `display: block | none` (same
+  WebGL-context-preserving trick as before).
+- **`pages/`** — `IntelligencePage`, `CapitalFlowPage`, `ChatPage`,
+  `ChartPage`, `MarketingLanding` moved out of `components/` so the directory
+  contains only reusable UI components.
+- **`lib/routes.ts`** (new) — `PageId` + `PATH_TO_PAGE` map. Removes routing
+  knowledge from `App.tsx`/`AppShell` so future routes are a one-line add.
+- **`App.tsx`** — now ~30 lines. Just the chart-tab early return and the
+  `<Routes>` tree. No state, no fetches, no inline 3D logic.
+
+Behaviour, props, fetch endpoints, animation timings, and DOM structure are
+unchanged — this is a pure file move + import-path update.
+
 ## Files
 
 **Added**
-- `frontend/src/components/MarketingLanding.tsx`
+- `frontend/src/pages/AssetPage.tsx` (new — extracted 3D scene)
+- `frontend/src/pages/MarketingLanding.tsx` (moved from `components/`)
+- `frontend/src/pages/IntelligencePage.tsx` (moved from `components/`)
+- `frontend/src/pages/CapitalFlowPage.tsx` (moved from `components/`)
+- `frontend/src/pages/ChatPage.tsx` (moved from `components/`)
+- `frontend/src/pages/ChartPage.tsx` (moved from `components/`)
+- `frontend/src/components/AppShell.tsx` (new — extracted in-app shell)
 - `frontend/src/components/MarketingHeader.tsx`
+- `frontend/src/lib/routes.ts` (new)
 - `frontend/src/lib/usePrices.ts`
 
 **Removed**
 - `frontend/src/components/AppHeader.tsx` (replaced by `MarketingHeader`)
+- `frontend/src/components/{IntelligencePage,CapitalFlowPage,ChatPage,ChartPage,MarketingLanding}.tsx`
+  (moved to `pages/`)
 
 **Modified**
 - `frontend/src/main.tsx` — wraps `<App />` in `<BrowserRouter>`.
 - `frontend/src/App.tsx`
-  - `AppShell` reads URL via `useLocation`; `localStorage` page persistence
-    removed.
-  - `PageId` moved here (was in `AppHeader`); `PATH_TO_PAGE` / `PAGE_TO_PATH`
-    use the `/app/*` prefix.
-  - Default `App` exports a `<Routes>` tree with `/`, `/app`, `/app/asset`,
-    `/app/intel`, `/app/capflow`, `/app/smart_asset` and a `*` redirect to `/`.
-  - Renders `<MarketingHeader floating={false} prices={...} loading={...} />`
-    instead of the deleted `AppHeader`.
+  - Slimmed to ~30 lines: chart-tab early return + `<Routes>` tree.
+  - All shell state and the 3D scene moved to `components/AppShell.tsx` and
+    `pages/AssetPage.tsx` respectively.
+  - `PageId` and `PATH_TO_PAGE` moved to `lib/routes.ts`.
+  - Routes use the `/app/*` prefix; `*` redirects to `/`.
 - `frontend/package.json` — added `react-router-dom@^7`.
 
 ## Manual test checklist
