@@ -223,7 +223,10 @@ export const MarketingHeader: React.FC<Props> = ({ prices, loading, variant = 'm
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const isApp = variant === 'app';
-  const floating = !isApp;
+  // Both variants float — that's the whole point of the glass-morphism effect:
+  // the wrapper sits ABOVE page content so backdrop-filter actually blurs the
+  // pixels behind it. The variant prop now only controls content (nav items
+  // + auth buttons), not layout.
 
   const tickers: Array<{ sym: string; v: string; c: number; col: string; asset: AssetKey }> | null =
     prices && [
@@ -255,24 +258,26 @@ export const MarketingHeader: React.FC<Props> = ({ prices, loading, variant = 'm
   return (
     <header
       style={{
-        position: floating ? 'fixed' : 'relative',
-        top: floating ? 0 : undefined,
-        left: floating ? 0 : undefined,
-        right: floating ? 0 : undefined,
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
         zIndex: 1000,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: floating ? '20px 32px' : '14px 28px',
+        // App variant trims a few px so the in-app bar feels a touch more
+        // compact than the marketing bar.
+        padding: isApp ? '14px 28px' : '20px 32px',
         gap: 20,
-        background: floating
-          ? 'linear-gradient(180deg, rgba(6,6,14,0.65) 0%, rgba(6,6,14,0) 100%)'
-          : 'rgba(4,4,10,0.96)',
-        borderBottom: floating ? 'none' : '1px solid rgba(255,255,255,0.05)',
-        backdropFilter: floating ? 'blur(2px)' : 'blur(24px)',
-        WebkitBackdropFilter: floating ? 'blur(2px)' : 'blur(24px)',
+        background:
+          'linear-gradient(180deg, rgba(6,6,14,0.65) 0%, rgba(6,6,14,0) 100%)',
+        backdropFilter: 'blur(2px)',
+        WebkitBackdropFilter: 'blur(2px)',
         flexShrink: 0,
-        pointerEvents: floating ? 'none' : 'auto',
+        // Wrapper is click-through; only the children opt back in to pointer
+        // events. Lets users interact with content peeking out at the edges.
+        pointerEvents: 'none',
       }}
     >
       {/* Logo (left) */}
@@ -455,7 +460,7 @@ export const MarketingHeader: React.FC<Props> = ({ prices, loading, variant = 'm
                 textTransform: 'uppercase',
               }}
             >
-              {loading ? 'Syncing' : 'Live'}
+              {loading ? 'Syncing' : ''}
             </span>
           </div>
         )}

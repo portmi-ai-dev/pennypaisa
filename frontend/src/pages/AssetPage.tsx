@@ -101,17 +101,19 @@ export const AssetPage: React.FC<AssetPageProps> = ({
   const totalWidth = 10;
   const goldTargetWidth = isMerged ? totalWidth * goldWeight : 10;
   const silverTargetWidth = isMerged ? totalWidth * silverWeight : 10;
-  // 3D bullion resting Y is -7 (slightly lower than previous -6) so the
-  // bullions sit comfortably below the centred Au:Ag ratio / hover panels.
-  // The MORPHED 2D plate positions (passed inline at the AnimatedBullion call
-  // site as [-7,-4,0] / [7,-4,0]) intentionally stay where they were so the
-  // chart plate remains anchored to its existing on-screen slot.
+  // 3D bullion resting Y is -5 — sits just below the camera target [0,-4,0]
+  // so the bullions read as roughly canvas-centred under the AppShell header.
+  // Previously -7 (carried over from a full-screen layout with no header),
+  // which left ~3 units of empty space above the bullions and made the scene
+  // look bottom-heavy. The MORPHED 2D plate positions (passed inline at the
+  // AnimatedBullion call site as [-7,-4,0] / [7,-4,0]) intentionally stay
+  // where they were so the chart plate remains anchored to its existing slot.
   const goldTargetPos: [number, number, number] = isMerged
-    ? [-(totalWidth / 2) + goldTargetWidth / 2, -7, 0]
-    : [-6.5, -7, 0];
+    ? [-(totalWidth / 2) + goldTargetWidth / 2, -5, 0]
+    : [-6.5, -5, 0];
   const silverTargetPos: [number, number, number] = isMerged
-    ? [totalWidth / 2 - silverTargetWidth / 2, -7, 0]
-    : [6.5, -7, 0];
+    ? [totalWidth / 2 - silverTargetWidth / 2, -5, 0]
+    : [6.5, -5, 0];
 
   const isAnyMorphed = morphedGold || morphedSilver;
 
@@ -286,12 +288,13 @@ export const AssetPage: React.FC<AssetPageProps> = ({
         </div>
       </div>
 
-      {/* Ratio Display (visible only when merged) */}
+      {/* Ratio Display (visible only when merged) — top offset clears the
+          floating glass header (≈76px) plus a comfortable gap. */}
       <div
         className={`absolute z-10 text-right transition-all duration-1000 ${
           isMerged && !isAnyMorphed ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-10'
         }`}
-        style={{ top: 32, right: 48 }}
+        style={{ top: 96, right: 48 }}
       >
         <h2
           className="uppercase mb-2"
@@ -343,7 +346,7 @@ export const AssetPage: React.FC<AssetPageProps> = ({
             exit={{ opacity: 0, x: -20 }}
             onClick={() => setMorphedGold(false)}
             className="fixed z-[300] flex items-center justify-center w-12 h-12 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-white backdrop-blur-xl pointer-events-auto cursor-pointer group transition-colors"
-            style={{ top: 78, left: 32 }}
+            style={{ top: 96, left: 32 }}
           >
             <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
           </motion.button>
@@ -356,7 +359,7 @@ export const AssetPage: React.FC<AssetPageProps> = ({
             exit={{ opacity: 0, x: -20 }}
             onClick={() => setMorphedSilver(false)}
             className="fixed z-[300] flex items-center justify-center w-12 h-12 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-white backdrop-blur-xl pointer-events-auto cursor-pointer group transition-colors"
-            style={{ top: 78, left: 32 }}
+            style={{ top: 96, left: 32 }}
           >
             <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
           </motion.button>

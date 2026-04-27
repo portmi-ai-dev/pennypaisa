@@ -220,11 +220,15 @@ export const AppShell: React.FC = () => {
         }
       : null;
 
+  // Visual height of the floating MarketingHeader in app variant: 14px*2
+  // padding + ~38px tallest child (the pill) ≈ 66px. Buffer to 76 so non-
+  // canvas pages clear it cleanly.
+  const HEADER_CLEARANCE = 76;
+
   return (
     <div
       style={{
-        display: 'flex',
-        flexDirection: 'column',
+        position: 'relative',
         width: '100%',
         height: '100vh',
         background: '#06060e',
@@ -233,15 +237,17 @@ export const AppShell: React.FC = () => {
     >
       <MarketingHeader prices={prices} loading={isLoading} variant="app" />
 
-      <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* Asset (3D bullion scene) — Three.js scene stays mounted to preserve
+      <main style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+        {/* Asset (3D bullion scene) — full-bleed so the WebGL canvas paints
+            behind the glass header. Scene stays mounted to preserve the
             WebGL context across route changes. */}
         <div
           style={{
             display: page === 'landing' ? 'block' : 'none',
             width: '100%',
             height: '100%',
-            position: 'relative',
+            position: 'absolute',
+            inset: 0,
           }}
         >
           <AssetPage
@@ -268,14 +274,16 @@ export const AppShell: React.FC = () => {
           />
         </div>
 
-        {/* Intelligence */}
+        {/* Intelligence — wrapper starts below the floating header so its
+            scrollable content doesn't tuck under the glass nav. */}
         <div
           style={{
             display: page === 'intelligence' ? 'block' : 'none',
-            width: '100%',
-            height: '100%',
             position: 'absolute',
-            inset: 0,
+            top: HEADER_CLEARANCE,
+            right: 0,
+            bottom: 0,
+            left: 0,
           }}
         >
           <IntelligencePage prices={prices} />
@@ -285,10 +293,11 @@ export const AppShell: React.FC = () => {
         <div
           style={{
             display: page === 'flow' ? 'block' : 'none',
-            width: '100%',
-            height: '100%',
             position: 'absolute',
-            inset: 0,
+            top: HEADER_CLEARANCE,
+            right: 0,
+            bottom: 0,
+            left: 0,
           }}
         >
           <CapitalFlowPage prices={prices} />
@@ -298,10 +307,11 @@ export const AppShell: React.FC = () => {
         <div
           style={{
             display: page === 'chat' ? 'block' : 'none',
-            width: '100%',
-            height: '100%',
             position: 'absolute',
-            inset: 0,
+            top: HEADER_CLEARANCE,
+            right: 0,
+            bottom: 0,
+            left: 0,
           }}
         >
           <ChatPage
