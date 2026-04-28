@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useRef, useMemo, useState, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Text, Float, RoundedBox, Billboard } from '@react-three/drei';
+import { Text, Float, RoundedBox } from '@react-three/drei';
 import * as THREE from 'three';
 
 import { BlockchainNode } from './BlockchainNode';
@@ -19,6 +19,12 @@ interface BitcoinCuboidProps {
    * latest BTC market intelligence so the floating panel reads fresh data.
    */
   onHoverIntelligence?: () => void;
+  /**
+   * Fires whenever the local intelligence-hover state flips. Lets the parent
+   * render an HTML floating panel outside the 3D scene (the in-scene
+   * Billboard panel was removed because it competed with the cuboid).
+   */
+  onIntelHover?: (hover: boolean) => void;
   isBlockchainExpanded?: boolean;
   marketCap?: number;
   dominance?: number;
@@ -235,6 +241,7 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
   weeklyChangePercent = 0,
   onClick,
   onHoverIntelligence,
+  onIntelHover,
   isBlockchainExpanded = false,
   marketCap = 1280000000000,
   dominance = 52.5,
@@ -346,12 +353,14 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
                   soundManager.playRuffle();
                 }
                 setHoveredLogo(true);
+                onIntelHover?.(true);
                 onHoverIntelligence?.();
               }
             }}
             onPointerOut={(e) => {
               e.stopPropagation();
               setHoveredLogo(false);
+              onIntelHover?.(false);
             }}
           >
             <meshPhysicalMaterial
@@ -473,11 +482,13 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
                     soundManager.playRuffle();
                   }
                   setHoveredLogo(true);
+                  onIntelHover?.(true);
                 }
               }}
               onPointerOut={(e) => {
                 e.stopPropagation();
                 setHoveredLogo(false);
+                onIntelHover?.(false);
               }}
             >
               <planeGeometry args={[2.0, 2.0]} />
@@ -569,182 +580,11 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
           </>
         )}
       </group>
-    </Float>    {/* Static Hover Pop-up Reasoning — positioned above the cuboid so it
-        sits inside the camera frustum (camera is at [0,2,18] FOV 45, so the
-        old [-8.5, 1.8, 0] anchor placed the 15-wide panel mostly off-screen
-        to the left). Mirrors the placement Gold/Silver use above their
-        bullions. Y shifted in lockstep with the cuboid drop to keep the
-        relative gap between cuboid and panel stable. */}
-    {hoveredLogo && (() => {
-      // Fallback so the panel still renders nicely while the Gemini sentiment
-      // request is in flight (or returned null). Without these defaults the
-      // panel would crash on `marketSentiment.marketType` etc.
-      const sent = marketSentiment ?? {
-        marketType: 'neutral' as const,
-        reasoning: 'Synthesizing analyst consensus from on-chain flows, derivatives positioning, and macro signals…',
-        cowenView: 'Loading on-chain risk model…',
-        solowayView: 'Loading technical setup…',
-        lastUpdated: undefined,
-      };
-      const accent = sent.marketType === 'bull' ? '#00ff00'
-                   : sent.marketType === 'bear' ? '#ff0000'
-                   : '#9aa0b4';
-      return (
-      <group position={[0, 2.5, 0]}>
-        <Billboard follow={true}>
-            {/* Main Background Panel - Deep Obsidian Glass style */}
-            <mesh position={[0, 0, -0.05]} frustumCulled={false}>
-              <planeGeometry args={[15, 8.5]} />
-              <meshPhysicalMaterial
-                color="#000000"
-                emissive="#000510"
-                emissiveIntensity={0.2}
-                transmission={0.3}
-                thickness={2}
-                roughness={0.1}
-                metalness={0.05}
-                ior={1.5}
-                transparent
-                opacity={0.98}
-              />
-            </mesh>
-
-            {/* Accent Border Glow - Subtle and refined */}
-            <mesh position={[0, 0, -0.06]} frustumCulled={false}>
-              <planeGeometry args={[15.1, 8.6]} />
-              <meshBasicMaterial color={accent} transparent opacity={0.15} />
-            </mesh>
-
-            {/* Header Section */}
-            <group position={[0, 3.6, 0]}>
-              <Text
-                fontSize={0.7}
-                color="#ffffff"
-                fontWeight="bold"
-                textAlign="center"
-                font={INTER_FONT}
-              >
-                MARKET INTELLIGENCE
-              </Text>
-              <mesh position={[0, -0.5, 0]} frustumCulled={false}>
-                <planeGeometry args={[10, 0.02]} />
-                <meshBasicMaterial color="#ffffff" transparent opacity={0.3} />
-              </mesh>
-            </group>
-
-            {/* Consensus Badge */}
-            <group position={[0, 2.2, 0]}>
-              <mesh position={[0, 0, -0.01]} frustumCulled={false}>
-                <planeGeometry args={[7, 0.8]} />
-                <meshBasicMaterial color={accent} transparent opacity={0.2} />
-              </mesh>
-              <Text
-                fontSize={0.5}
-                color={accent}
-                fontWeight="bold"
-                textAlign="center"
-                font={INTER_FONT}
-              >
-                CONSENSUS: {sent.marketType.toUpperCase()}
-              </Text>
-            </group>
-
-            {/* Main Reasoning Section */}
-            <group position={[0, 0.8, 0]}>
-              <Text
-                position={[0, 0.2, 0]}
-                fontSize={0.35}
-                color="#ffffff"
-                maxWidth={13.5}
-                textAlign="center"
-                lineHeight={1.4}
-                font={INTER_FONT}
-              >
-                {sent.reasoning}
-              </Text>
-            </group>
-
-            {/* Analyst Perspectives Grid */}
-            <group position={[0, -1.6, 0]}>
-              {/* Benjamin Cowen Card */}
-              <group position={[-3.6, 0, 0]}>
-                <mesh position={[0, -0.2, -0.01]} frustumCulled={false}>
-                  <planeGeometry args={[7.0, 3.2]} />
-                  <meshBasicMaterial color="#ffffff" transparent opacity={0.04} />
-                </mesh>
-                <Text
-                  position={[0, 1.0, 0]}
-                  fontSize={0.36}
-                  color="#00ffff"
-                  fontWeight="bold"
-                  textAlign="center"
-                  anchorX="center"
-                  font={INTER_FONT}
-                >
-                  BENJAMIN COWEN
-                </Text>
-                <Text
-                  position={[0, 0.5, 0]}
-                  fontSize={0.3}
-                  color="#cccccc"
-                  maxWidth={6.5}
-                  textAlign="center"
-                  anchorX="center"
-                  anchorY="top"
-                  lineHeight={1.3}
-                  font={INTER_FONT}
-                >
-                  {sent.cowenView}
-                </Text>
-              </group>
-
-              {/* Gareth Soloway Card */}
-              <group position={[3.6, 0, 0]}>
-                <mesh position={[0, -0.2, -0.01]} frustumCulled={false}>
-                  <planeGeometry args={[7.0, 3.2]} />
-                  <meshBasicMaterial color="#ffffff" transparent opacity={0.04} />
-                </mesh>
-                <Text
-                  position={[0, 1.0, 0]}
-                  fontSize={0.36}
-                  color="#ff00ff"
-                  fontWeight="bold"
-                  textAlign="center"
-                  anchorX="center"
-                  font={INTER_FONT}
-                >
-                  GARETH SOLOWAY
-                </Text>
-                <Text
-                  position={[0, 0.5, 0]}
-                  fontSize={0.3}
-                  color="#cccccc"
-                  maxWidth={6.5}
-                  textAlign="center"
-                  anchorX="center"
-                  anchorY="top"
-                  lineHeight={1.3}
-                  font={INTER_FONT}
-                >
-                  {sent.solowayView}
-                </Text>
-              </group>
-            </group>
-
-            {/* Footer Decoration */}
-            <Text
-              position={[0, -3.8, 0]}
-              fontSize={0.16}
-              color="#555555"
-              textAlign="center"
-              font={INTER_FONT}
-            >
-              AI AGGREGATED MARKET SENTIMENT • {sent.lastUpdated ? `UPDATED AT ${sent.lastUpdated}` : 'REAL-TIME DATA'}
-            </Text>
-        </Billboard>
-      </group>
-      );
-    })()}
+    </Float>
+    {/* In-3D Billboard intel panel removed — replaced by the HTML IntelPopup
+        rendered by AssetPage on the right side of the viewport. The local
+        `hoveredLogo` state is still used to pause the front-face rotation
+        while the user reads the popup. */}
   </group>
 );
 };

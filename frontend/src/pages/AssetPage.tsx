@@ -11,6 +11,7 @@ import { SilverBullion } from '../components/SilverBullion';
 import { Tether } from '../components/Tether';
 import { BitcoinCuboid } from '../components/BitcoinCuboid';
 import { CursorBackground } from '../components/CursorBackground';
+import { IntelPopup } from '../components/IntelPopup';
 import { soundManager } from '../lib/sounds';
 import { type AssetKey, type AssetSentiment, type Prices } from '../lib/marketData';
 
@@ -90,6 +91,15 @@ export const AssetPage: React.FC<AssetPageProps> = ({
   // wired up in the bullion onPointerOver/Out callbacks for future overlays.
   const [, setHoveredAsset] = useState<AssetKey | null>(null);
 
+  // Per-asset intelligence-hover flags, driven by the XAU/XAG/BTC triggers
+  // inside the bullion + cuboid components. Drive the floating IntelPopup
+  // (gold left; silver and bitcoin both right — they don't typically hover at
+  // the same time since bitcoin only appears once the user reveals it).
+  // Replaces the old in-3D-scene Billboard panels.
+  const [goldIntelHover, setGoldIntelHover] = useState(false);
+  const [silverIntelHover, setSilverIntelHover] = useState(false);
+  const [bitcoinIntelHover, setBitcoinIntelHover] = useState(false);
+
   const goldRef = useRef<THREE.Group>(null);
   const silverRef = useRef<THREE.Group>(null);
 
@@ -167,6 +177,10 @@ export const AssetPage: React.FC<AssetPageProps> = ({
                   }}
                   onClick={() => setMorphedGold(!morphedGold)}
                   marketSentiment={goldSentiment}
+                  onIntelHover={(hover) => {
+                    setGoldIntelHover(hover);
+                    if (hover) fetchSentimentFor('gold');
+                  }}
                 />
               </AnimatedBullion>
 
@@ -193,6 +207,10 @@ export const AssetPage: React.FC<AssetPageProps> = ({
                   }}
                   onClick={() => setMorphedSilver(!morphedSilver)}
                   marketSentiment={silverSentiment}
+                  onIntelHover={(hover) => {
+                    setSilverIntelHover(hover);
+                    if (hover) fetchSentimentFor('silver');
+                  }}
                 />
               </AnimatedBullion>
 
@@ -211,6 +229,10 @@ export const AssetPage: React.FC<AssetPageProps> = ({
                   weeklyChangePercent={btcWeeklyChangePercent}
                   onClick={() => setShowBlockchain(!showBlockchain)}
                   onHoverIntelligence={() => fetchSentimentFor('bitcoin')}
+                  onIntelHover={(hover) => {
+                    setBitcoinIntelHover(hover);
+                    if (hover) fetchSentimentFor('bitcoin');
+                  }}
                   isBlockchainExpanded={showBlockchain}
                   marketCap={btcMarketCap}
                   dominance={btcDominance}
@@ -287,6 +309,30 @@ export const AssetPage: React.FC<AssetPageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Intelligence popups — replace the old in-3D-scene Billboard panels.
+          Gold sits on the left; silver and bitcoin share the right slot.
+          Bitcoin takes precedence when hovered (in practice they don't overlap
+          since bitcoin only appears after the tether is revealed). Hidden
+          during morph; the bullion onIntelHover flips false on morph. */}
+      <IntelPopup
+        visible={goldIntelHover && !morphedGold && !morphedSilver}
+        side="left"
+        asset="gold"
+        sentiment={goldSentiment}
+      />
+      <IntelPopup
+        visible={silverIntelHover && !bitcoinIntelHover && !morphedGold && !morphedSilver}
+        side="right"
+        asset="silver"
+        sentiment={silverSentiment}
+      />
+      <IntelPopup
+        visible={bitcoinIntelHover && !morphedGold && !morphedSilver}
+        side="right"
+        asset="bitcoin"
+        sentiment={bitcoinSentiment}
+      />
 
       {/* Ratio Display (visible only when merged) — top offset clears the
           floating glass header (≈76px) plus a comfortable gap. */}
@@ -416,7 +462,7 @@ export const AssetPage: React.FC<AssetPageProps> = ({
           fontFamily: 'DM Sans, sans-serif',
           fontSize: 9,
           letterSpacing: 2.5,
-          color: 'rgba(255,255,255,0.16)',
+          color: 'rgba(255, 255, 255, 1)',
           textTransform: 'uppercase',
           pointerEvents: 'none',
         }}

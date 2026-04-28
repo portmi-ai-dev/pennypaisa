@@ -27,7 +27,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<MarketingLanding />} />
-      <Route path="/app" element={<Navigate to="/app/asset" replace />} />
+      <Route path="/app" element={<Navigate to="/app/capflow" replace />} />
       <Route path="/app/asset" element={<AppShell />} />
       <Route path="/app/intel" element={<AppShell />} />
       <Route path="/app/capflow" element={<AppShell />} />

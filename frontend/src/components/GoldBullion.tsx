@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useRef, useMemo, useState, forwardRef, useEffect, Suspense } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Text, Float, RoundedBox, Billboard } from '@react-three/drei';
+import { Text, Float, RoundedBox } from '@react-three/drei';
 import * as THREE from 'three';
 
 import { motion } from 'motion/react';
@@ -28,6 +28,10 @@ interface GoldBullionProps {
   onClick?: () => void;
   onPointerOver?: () => void;
   onPointerOut?: () => void;
+  // Fires when the user hovers/leaves the XAU intelligence trigger. Lets the
+  // parent render an HTML floating panel outside the 3D scene (the in-scene
+  // Billboard panel was removed because it competed with the bullion).
+  onIntelHover?: (hover: boolean) => void;
 }
 
 const INTER_FONT = "https://fonts.gstatic.com/s/inter/v12/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hjp-Ek-_EeA.woff";
@@ -190,11 +194,12 @@ export const GoldBullion = forwardRef<THREE.Group, GoldBullionProps>(({
   isMerged = false, 
   isMorphed = false, 
   isWeekend = false,
-  marketSentiment: propSentiment, 
-  otherBullionRef, 
-  onClick, 
-  onPointerOver, 
-  onPointerOut 
+  marketSentiment: propSentiment,
+  otherBullionRef,
+  onClick,
+  onPointerOver,
+  onPointerOut,
+  onIntelHover,
 }, ref) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const barMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
@@ -206,7 +211,7 @@ export const GoldBullion = forwardRef<THREE.Group, GoldBullionProps>(({
   const [isPrivateInvestmentExpanded, setIsPrivateInvestmentExpanded] = useState(false);
   const [isCentralBanksExpanded, setIsCentralBanksExpanded] = useState(false);
   const [isIndustryTechExpanded, setIsIndustryTechExpanded] = useState(false);
-  const [hoveredIntelligence, setHoveredIntelligence] = useState(false);
+  const [, setHoveredIntelligence] = useState(false);
 
   const marketSentiment = propSentiment || {
     marketType: 'bull' as const,
@@ -308,8 +313,10 @@ export const GoldBullion = forwardRef<THREE.Group, GoldBullionProps>(({
       debrisData.current = [];
       animationStartTime.current = 0;
       setHoveredIntelligence(false);
+      onIntelHover?.(false);
     } else {
       setHoveredIntelligence(false);
+      onIntelHover?.(false);
     }
     prevMorphed.current = isMorphed;
   }, [isMorphed]);
@@ -782,6 +789,7 @@ export const GoldBullion = forwardRef<THREE.Group, GoldBullionProps>(({
             onPointerDown={(e) => {
               e.stopPropagation();
               setHoveredIntelligence(false);
+              onIntelHover?.(false);
               soundManager.playMetallicClink(1);
               onClick?.();
             }}
@@ -1642,11 +1650,13 @@ export const GoldBullion = forwardRef<THREE.Group, GoldBullionProps>(({
                       soundManager.playRuffle();
                     }
                     setHoveredIntelligence(true);
+                    onIntelHover?.(true);
                     document.body.style.cursor = 'pointer';
                   }}
                   onPointerOut={(e) => {
                     e.stopPropagation();
                     setHoveredIntelligence(false);
+                    onIntelHover?.(false);
                     document.body.style.cursor = 'auto';
                   }}
                 >
@@ -1691,169 +1701,6 @@ export const GoldBullion = forwardRef<THREE.Group, GoldBullionProps>(({
       <pointLight position={[0, 0, 8]} intensity={isMorphed ? 800 : 300} color="#ffffff" />
       <pointLight position={[10, 2, 5]} intensity={isMorphed ? 1000 : 400} color="#ffffff" />
 
-      {hoveredIntelligence && !isMorphed && !showSectors && (
-        <group position={[-2, 6, 0]}>
-          <Billboard follow={true}>
-            {/* Main Background Panel */}
-            <mesh position={[0, 0, -0.05]} frustumCulled={false}>
-              <planeGeometry args={[15, 8.5]} />
-              <meshPhysicalMaterial 
-                color="#000000" 
-                emissive="#100800"
-                emissiveIntensity={0.2}
-                transmission={0.3}
-                thickness={2}
-                roughness={0.1}
-                metalness={0.05}
-                ior={1.5}
-                transparent 
-                opacity={0.98} 
-              />
-            </mesh>
-            
-            {/* Accent Border Glow */}
-            <mesh position={[0, 0, -0.06]} frustumCulled={false}>
-              <planeGeometry args={[15.1, 8.6]} />
-              <meshBasicMaterial 
-                color="#FFD700" 
-                transparent 
-                opacity={0.15} 
-              />
-            </mesh>
-
-            {/* Header Section */}
-            <group position={[0, 3.6, 0]}>
-              <Text
-                fontSize={0.7}
-                color="#ffffff"
-                fontWeight="bold"
-                textAlign="center"
-                font={INTER_FONT}
-              >
-                GOLD MARKET INTELLIGENCE
-              </Text>
-              <mesh position={[0, -0.5, 0]} frustumCulled={false}>
-                <planeGeometry args={[10, 0.02]} />
-                <meshBasicMaterial color="#ffffff" transparent opacity={0.3} />
-              </mesh>
-            </group>
-            
-            {/* Consensus Badge */}
-            <group position={[0, 2.2, 0]}>
-              <mesh position={[0, 0, -0.01]} frustumCulled={false}>
-                <planeGeometry args={[7, 0.8]} />
-                <meshBasicMaterial 
-                  color="#FFD700" 
-                  transparent 
-                  opacity={0.2} 
-                />
-              </mesh>
-              <Text
-                fontSize={0.5}
-                color="#FFD700"
-                fontWeight="bold"
-                textAlign="center"
-                font={INTER_FONT}
-              >
-                CONSENSUS: {marketSentiment.marketType.toUpperCase()}
-              </Text>
-            </group>
-
-            {/* Main Reasoning Section */}
-            <group position={[0, 0.8, 0]}>
-              <Text
-                position={[0, 0.2, 0]}
-                fontSize={0.35}
-                color="#ffffff"
-                maxWidth={13.5}
-                textAlign="center"
-                lineHeight={1.4}
-                font={INTER_FONT}
-              >
-                {marketSentiment.reasoning}
-              </Text>
-            </group>
-
-            {/* Analyst Perspectives Grid */}
-            <group position={[0, -1.6, 0]}>
-              {/* Benjamin Cowen Card */}
-              <group position={[-3.6, 0, 0]}>
-                <mesh position={[0, -0.2, -0.01]} frustumCulled={false}>
-                  <planeGeometry args={[7.0, 3.2]} />
-                  <meshBasicMaterial color="#ffffff" transparent opacity={0.04} />
-                </mesh>
-                <Text
-                  position={[0, 1.0, 0]}
-                  fontSize={0.36}
-                  color="#FFD700"
-                  fontWeight="bold"
-                  textAlign="center"
-                  anchorX="center"
-                  font={INTER_FONT}
-                >
-                  BENJAMIN COWEN
-                </Text>
-                <Text
-                  position={[0, 0.5, 0]}
-                  fontSize={0.3}
-                  color="#cccccc"
-                  maxWidth={6.5}
-                  textAlign="center"
-                  anchorX="center"
-                  anchorY="top"
-                  lineHeight={1.3}
-                  font={INTER_FONT}
-                >
-                  {marketSentiment.cowenView}
-                </Text>
-              </group>
-
-              {/* Gareth Soloway Card */}
-              <group position={[3.6, 0, 0]}>
-                <mesh position={[0, -0.2, -0.01]} frustumCulled={false}>
-                  <planeGeometry args={[7.0, 3.2]} />
-                  <meshBasicMaterial color="#ffffff" transparent opacity={0.04} />
-                </mesh>
-                <Text
-                  position={[0, 1.0, 0]}
-                  fontSize={0.36}
-                  color="#DAA520"
-                  fontWeight="bold"
-                  textAlign="center"
-                  anchorX="center"
-                  font={INTER_FONT}
-                >
-                  GARETH SOLOWAY
-                </Text>
-                <Text
-                  position={[0, 0.5, 0]}
-                  fontSize={0.3}
-                  color="#cccccc"
-                  maxWidth={6.5}
-                  textAlign="center"
-                  anchorX="center"
-                  anchorY="top"
-                  lineHeight={1.3}
-                  font={INTER_FONT}
-                >
-                  {marketSentiment.solowayView}
-                </Text>
-              </group>
-            </group>
-
-            {/* Footer Decoration */}
-            <Text
-              position={[0, -3.8, 0]}
-              fontSize={0.16}
-              color="#555555"
-              textAlign="center"
-              font={INTER_FONT}
-            >
-              AI AGGREGATED MARKET SENTIMENT • {marketSentiment.lastUpdated ? `UPDATED AT ${marketSentiment.lastUpdated}` : 'REAL-TIME DATA'}
-            </Text>
-          </Billboard>
-        </group>
-      )}
         </group>
       </group>
     </Float>
