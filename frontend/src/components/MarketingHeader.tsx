@@ -13,9 +13,9 @@ interface NavLink {
 // In-app variant: every product surface as its own pill item. Docs/Pricing
 // are stripped — they live on the public site only.
 const NAV_APP: NavLink[] = [
-  { label: 'Assets', to: '/app/asset' },
   { label: 'Capital Flow', to: '/app/capflow' },
   { label: 'Intelligence', to: '/app/intel', hasMenu: true },
+  { label: 'Assets', to: '/app/asset' },
   { label: 'Smart Assets', to: '/app/smart_asset', hasMenu: true },
 ];
 
