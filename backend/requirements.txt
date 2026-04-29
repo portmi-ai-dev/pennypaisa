@@ -12,3 +12,7 @@ slowapi
 # even with browser-like User-Agent headers. curl_cffi is the standard
 # workaround and is what yfinance uses under the hood.
 curl_cffi
+yt-dlp
+requests
+scrapetube
+youtube-transcript-api

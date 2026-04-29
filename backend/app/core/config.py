@@ -30,6 +30,9 @@ class Settings(BaseSettings):
         True, description="Enable grounding search tools"
     )
 
+    # assembly ai
+    assemblyai_api_key: str = Field(..., description="ASSEMBLY AI API KEY")
+
     @field_validator("NEON_DATABASE_URL", mode="before")
     @classmethod
     def _empty_to_none(cls, value: str | None) -> str | None:
