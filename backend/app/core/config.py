@@ -23,6 +23,13 @@ class Settings(BaseSettings):
         None, description="Neon Postgres connection URL (postgresql://...)"
     )
 
+    # YouTube (optional)
+    # Comma-separated list of channel URLs for the hourly video-id cron.
+    YT_CHANNEL_URLS: str | None = Field(
+        None,
+        description="Comma-separated YouTube channel URLs for the hourly cron",
+    )
+
     # Google Gemini
     GEMINI_API_KEY: str = Field(..., description="Google Gemini API key")
     GEMINI_MODEL: str = Field("gemini-2.5-flash", description="Gemini model name")
@@ -33,7 +40,7 @@ class Settings(BaseSettings):
     # assembly ai
     assemblyai_api_key: str = Field(..., description="ASSEMBLY AI API KEY")
 
-    @field_validator("NEON_DATABASE_URL", mode="before")
+    @field_validator("NEON_DATABASE_URL", "YT_CHANNEL_URLS", mode="before")
     @classmethod
     def _empty_to_none(cls, value: str | None) -> str | None:
         if value is None:
