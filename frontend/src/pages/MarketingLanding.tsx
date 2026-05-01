@@ -296,7 +296,7 @@ export const MarketingLanding: React.FC = () => {
                 boxShadow: '0 0 8px #d4a84388',
               }}
             />
-            Your Personal Market Analyst
+            Markets Gamified
           </motion.div>
 
           <motion.h1
@@ -313,8 +313,8 @@ export const MarketingLanding: React.FC = () => {
               color: '#f3ecdc',
             }}
           >
-            The market,<br />
-            <span style={{ fontStyle: 'italic', color: '#d4a843' }}>cast in metal.</span>
+            Stop reading the market,<br />
+            <span style={{ fontStyle: 'italic', color: '#d4a843' }}>Watch it move.</span>
           </motion.h1>
 
           <motion.p
@@ -329,8 +329,7 @@ export const MarketingLanding: React.FC = () => {
               color: 'rgba(255,255,255,0.62)',
             }}
           >
-            gilver.ai is a live market terminal where gold, silver and bitcoin are
-            rendered as physical objects. Hover, merge and interrogate them — every
+            Gilver.ai is a market-visualisation and intelligence platform. Hover, merge and interrogate — every
             motion encodes price, sentiment and capital flow.
           </motion.p>
 
