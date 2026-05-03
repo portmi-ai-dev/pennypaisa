@@ -28,7 +28,7 @@
 import * as React from 'react';
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { ASSET_CONFIG, openChartTab, type AssetKey, type Prices } from '../lib/marketData';
+import { ASSET_CONFIG, type AssetKey, type Prices } from '../lib/marketData';
 import { getDriverViz } from '../components/intelligenceViz';
 import { getExplanation, type DriverExplanation } from '../lib/driverExplanations';
 
@@ -56,19 +56,66 @@ interface ConditionConfig {
   bear: Condition[];
 }
 
+// ─── Curated REGIME call per asset ────────────────────────────────────────
+// Single source of truth for the page's "Bull / Bear / Mixed" consensus.
+// Both the header pill (top of main column) and the right-side Explainer
+// panel default view read from THIS map — they used to compute regime
+// independently (24h price action vs active-driver count) and could
+// disagree, which they did. Now they always match.
+//
+// This is hand-curated, not derived: a regime call factors in cycle
+// position and dominant near-term forces, not just a count of active
+// pros vs cons. A future version could compute this from real-time data
+// + an AI synthesis pass.
+const CONSENSUS_REGIME: Record<AssetKey, 'Bull' | 'Bear' | 'Mixed'> = {
+  gold:    'Bear', // Cyclic ATH wave done; consolidation + strong USD now dominant
+  silver:  'Bear', // Post-parabolic profit-taking; gold sideways removes lead
+  bitcoin: 'Bear', // Cycle peaked late 2025; next bull phase post-Apr-2028 halving
+};
+
+// Hand-curated synthesis paragraph per asset — explains *why* the asset
+// sits in its current regime, woven from the active bull / bear drivers.
+// Surfaces in the right-side Explainer panel as the default (no-hover)
+// state. Update these whenever the macro regime materially shifts.
+const CONSENSUS_NARRATIVE: Record<AssetKey, string> = {
+  gold:
+    'Gold is in a near-term bearish phase. The 15-year cyclic ATH wave has played out — the ' +
+    'structural up-move is exhausted for now and price is settling into a multi-month ' +
+    'consolidation. Strong US-dollar pressure and cooling CPI are removing the inflation-hedge ' +
+    'bid. Sovereign demand (central banks adding 1,000+ tonnes/yr) and geopolitical risk ' +
+    '(Iran-US war, Ukraine, Middle East) provide a structural floor, but in the near term the ' +
+    'consolidation + strong-USD setup dominates the tape.',
+  silver:
+    'Silver is in a bear phase after the parabolic spike. The classic 40–60% post-peak ' +
+    'drawdown is playing out, and gold consolidating at the same time removes silver’s ' +
+    'lead-from-the-top dynamic. Structural demand stories — supply deficit, AI / data centres, ' +
+    'solar / EV — remain intact for the long term, but silver’s ~2.5x beta to gold is ' +
+    'amplifying the downside in the near term.',
+  bitcoin:
+    'Bitcoin has peaked in this cycle. Every prior 4-year cycle has been followed by a 70-85% ' +
+    'drawdown from peak, and we are in the early stages of that pattern. Spot-ETF flows past ' +
+    '$100B AUM and the US Strategic Bitcoin Reserve (207K BTC) provide a structural bid floor ' +
+    'that may make this drawdown shallower than 2018 or 2022, but elevated macro volatility — ' +
+    'tariffs, credit spreads — means BTC is the first asset sold in any global liquidation. ' +
+    'The next major bull phase is unlikely until after the April 2028 halving.',
+};
+
 const COND: Record<AssetKey, ConditionConfig> = {
   gold: {
     bull: [
-      { text: 'Cyclic ATH pattern (~15yr cycles)', active: true, why: 'Gold breaking new all-time highs through 2025-26.' },
-      { text: 'War & geopolitical fear', active: true, why: 'Active conflicts and elevated geopolitical risk premium.' },
+      // Cyclic ATH wave is COMPLETE — the move higher has played out.
+      { text: 'Cyclic ATH pattern (~15yr cycles)', why: 'Cycle complete; structural ATH wave has played out.' },
+      { text: 'War & geopolitical fear', active: true, why: 'Iran-US war on top of ongoing Ukraine + Middle East conflicts.' },
       { text: 'Inflation hedge', active: true, why: 'Real yields still negative for much of the curve — gold preferred over cash.' },
       { text: 'De-dollarization', active: true, why: 'BRICS+ reserve diversification accelerating. USD share of global reserves falling.' },
       { text: 'Central bank accumulation', active: true, why: 'Record central-bank buying for the 4th consecutive year.' },
-      { text: 'Weak US Dollar demand' },
+      { text: 'Weak US Dollar demand', why: 'DXY has firmed back above prior support — weak-dollar bid not in play.' },
     ],
     bear: [
-      { text: 'Prolonged consolidation periods' },
-      { text: 'Strong US Dollar' },
+      // Newly active: range-bound consolidation has started post-cycle peak.
+      { text: 'Prolonged consolidation periods', active: true, why: 'Multi-month sideways range after the 2026 ATH; momentum exhausted.' },
+      // Newly active: USD has firmed and is pressuring gold.
+      { text: 'Strong US Dollar', active: true, why: 'DXY firm; gold mechanically pressured (inverse correlation).' },
       { text: 'Risk-on capital rotation' },
       { text: 'Rising interest rates' },
       { text: 'Cooling inflation narrative', active: true, why: 'Headline CPI moderating from 2022 highs.' },
@@ -79,28 +126,33 @@ const COND: Record<AssetKey, ConditionConfig> = {
       { text: 'Structural supply deficit deepening', active: true, why: 'Silver Institute reports 5th consecutive deficit year.' },
       { text: 'AI & data center demand', active: true, why: 'Hyperscaler buildouts driving conductive-silver demand.' },
       { text: 'Solar + EV battery absorption', active: true, why: 'Global solar installs continuing record pace.' },
-      { text: 'Follows gold bull cycles', active: true, why: 'Gold at ATH typically pulls silver higher with lag.' },
+      // Gold cycle has played out — silver lag advantage is no longer in play.
+      { text: 'Follows gold bull cycles', why: 'Gold cycle complete; silver lag-from-the-top dynamic is over for this cycle.' },
       { text: 'Dual store-of-value identity' },
     ],
     bear: [
-      { text: 'Massive profit-taking after parabolic rises' },
+      // Newly active: parabolic peak retraced, classic silver profit-taking pattern playing out.
+      { text: 'Massive profit-taking after parabolic rises', active: true, why: 'Silver dumped from cycle peak — classic 40-60% retrace under way.' },
       { text: 'Narrative exaggeration near tops' },
-      { text: 'Gold consolidation drags silver' },
-      { text: 'High volatility downside risk', active: true, why: 'Silver beta to gold remains elevated.' },
+      // Newly active: gold sideways drags silver per the lag-divergence dynamic.
+      { text: 'Gold consolidation drags silver', active: true, why: 'Gold range-bound — silver loses its lead-from-the-top dynamic.' },
+      { text: 'High volatility downside risk', active: true, why: 'Silver beta to gold remains elevated — drawdowns are amplified.' },
       { text: 'Industrial slowdown scenarios' },
     ],
   },
   bitcoin: {
     bull: [
-      { text: '4-year halving cycle bull phase', active: true, why: 'Post-2024-halving cycle still in expansion phase.' },
+      // Halving cycle bull phase is OVER — next halving is April 2028.
+      { text: '4-year halving cycle bull phase', why: 'Post-2024-halving bull peaked late 2025. Next phase post-April-2028 halving.' },
       { text: 'Fed rate cuts & M2 expansion' },
-      { text: 'Institutional & ETF adoption', active: true, why: 'Spot BTC ETFs continue record AUM growth.' },
-      { text: 'Government treasury accumulation', active: true, why: 'US Strategic Bitcoin Reserve and sovereign buyers active.' },
+      { text: 'Institutional & ETF adoption', active: true, why: 'Spot BTC ETFs continue absorbing — sticky long-term capital floor.' },
+      { text: 'Government treasury accumulation', active: true, why: 'US Strategic Bitcoin Reserve (207K BTC) + sovereign buyers active.' },
       { text: 'Falling DXY tailwind' },
     ],
     bear: [
-      { text: '70%+ post-cycle drawdowns', why: 'Risk increases as cycle matures.' },
-      { text: 'FUD & macro shock risk', active: true, why: 'Elevated macro volatility persists.' },
+      // Newly active: cycle has peaked; drawdown phase begins.
+      { text: '70%+ post-cycle drawdowns', active: true, why: 'Cycle peaked late 2025 — historical pattern targets 70-85% drawdown from peak.' },
+      { text: 'FUD & macro shock risk', active: true, why: 'Elevated macro volatility — tariff-related, credit spreads widening.' },
       { text: 'Fed hawkish pivot scenario' },
       { text: 'Government crackdown / ban risk' },
       { text: 'Quantum computing narrative' },
@@ -449,42 +501,98 @@ const DriverCard: React.FC<DriverCardProps> = ({ cond, isBull, color, onHoverSta
 interface ExplainerProps {
   hovered: { cond: Condition; isBull: boolean } | null;
   asset: AssetKey;
-  assetColor: string;
+  /** Asset's full driver list — drives the consensus default state. */
+  cond: ConditionConfig;
+  /** Curated regime call — must match the header pill. */
+  regime: 'Bull' | 'Bear' | 'Mixed';
 }
 
-const ExplainerPanel: React.FC<ExplainerProps> = ({ hovered, asset, assetColor }) => {
-  // Default state when nothing's hovered: short asset overview + glossary
-  // legend so the panel never feels empty.
+const ExplainerPanel: React.FC<ExplainerProps> = ({ hovered, asset, cond, regime }) => {
+  // Default state when nothing's hovered: a synthesised CONSENSUS view that
+  // explains *why* the asset is in its current regime — regime tag, a
+  // bull-vs-bear count strip, the curated narrative paragraph, and the
+  // actual active drivers underneath. Regime label comes from the SAME
+  // curated CONSENSUS_REGIME map the header pill reads, so the two are
+  // guaranteed to agree.
   if (!hovered) {
     const assetName = ASSET_CONFIG[asset].name;
+    const activeBull = cond.bull.filter(c => c.active);
+    const activeBear = cond.bear.filter(c => c.active);
+    const regimeColor = regime === 'Bull' ? '#7dd689'
+                      : regime === 'Bear' ? '#ff8a86'
+                      : '#d4a843';
+    const narrative = CONSENSUS_NARRATIVE[asset];
+    // Bull/Bear weight bar — proportional split of active drivers.
+    const total = activeBull.length + activeBear.length || 1;
+    const bullPct = (activeBull.length / total) * 100;
+
     return (
-      <div style={panelStyles.shell(assetColor)}>
-        <div style={panelStyles.eyebrow}>Driver Explainer</div>
-        <div style={panelStyles.title(assetColor)}>{assetName} · Glossary</div>
-        <div style={panelStyles.body}>
-          <p style={{ marginBottom: 12 }}>
-            Hover any <strong style={{ color: '#7dd689' }}>green</strong> or
-            {' '}<strong style={{ color: '#ff8a86' }}>red</strong> driver card to see
-            a plain-English explanation here.
-          </p>
-          <p style={{ marginBottom: 12 }}>
-            <strong style={{ color: assetColor }}>Active</strong> drivers (with the
-            pulse dot and full colour) are forces meaningfully in play right now.
-            <strong style={{ color: 'rgba(255,255,255,0.65)' }}> Dimmed</strong> drivers
-            are part of the framework but not active in the current regime.
-          </p>
-          <p style={{ color: 'rgba(255,255,255,0.5)' }}>
-            Every card embeds a small visualisation showing the historical data
-            behind the driver — peaks, deficits, accumulation curves, conflict
-            timelines, etc.
-          </p>
+      <div style={panelStyles.shell(regimeColor)}>
+        <div style={panelStyles.eyebrow}>Asset Consensus</div>
+        <div style={panelStyles.title(regimeColor)}>
+          {assetName} · {regime}
         </div>
+
+        {/* Driver count strip (bull green | bear red) */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            marginBottom: 18,
+            fontFamily: 'DM Sans, sans-serif',
+            fontSize: 11.5,
+          }}
+        >
+          <span style={{ color: '#7dd689', fontWeight: 600 }}>{activeBull.length} bull</span>
+          <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.07)', borderRadius: 2, overflow: 'hidden', display: 'flex' }}>
+            <div style={{ width: `${bullPct}%`, background: '#7dd689', opacity: 0.78 }} />
+            <div style={{ flex: 1, background: '#ff8a86', opacity: 0.78 }} />
+          </div>
+          <span style={{ color: '#ff8a86', fontWeight: 600 }}>{activeBear.length} bear</span>
+        </div>
+
+        {/* Synthesis paragraph */}
+        <div style={{ ...panelStyles.eyebrow, color: 'rgba(255,255,255,0.4)' }}>
+          Why {regime.toLowerCase()}ish
+        </div>
+        <div style={panelStyles.body}>{narrative}</div>
+
+        {/* Active driver lists — clean bullets, asset-tinted dots */}
+        {activeBull.length > 0 && (
+          <>
+            <div style={{ ...panelStyles.eyebrow, marginTop: 18, color: '#7dd689' }}>
+              Bullish forces in play
+            </div>
+            <ul style={{ ...panelStyles.list, color: 'rgba(232,224,208,0.84)' }}>
+              {activeBull.map((c, i) => (
+                <li key={i} style={panelStyles.listItem}>
+                  <span style={{ ...panelStyles.bullet, background: '#4caf50' }} />
+                  {c.text}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {activeBear.length > 0 && (
+          <>
+            <div style={{ ...panelStyles.eyebrow, marginTop: 14, color: '#ff8a86' }}>
+              Bearish forces in play
+            </div>
+            <ul style={{ ...panelStyles.list, color: 'rgba(232,224,208,0.84)' }}>
+              {activeBear.map((c, i) => (
+                <li key={i} style={panelStyles.listItem}>
+                  <span style={{ ...panelStyles.bullet, background: '#ef5350' }} />
+                  {c.text}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
         <div style={panelStyles.divider} />
-        <div style={{ ...panelStyles.eyebrow, marginTop: 16, color: 'rgba(255,255,255,0.32)' }}>How drivers are picked</div>
-        <div style={{ ...panelStyles.body, marginTop: 6 }}>
-          The list is curated from analyst consensus, central-bank reports,
-          ETF-flow data, and on-chain metrics. The <strong>active</strong> flag
-          flips when the underlying condition crosses a measurable threshold.
+        <div style={{ ...panelStyles.eyebrow, marginTop: 14, color: 'rgba(255,255,255,0.32)' }}>
+          Hover any driver card on the left for its full plain-English explanation.
         </div>
       </div>
     );
@@ -609,6 +717,31 @@ const panelStyles = {
     background: 'rgba(255,255,255,0.06)',
     margin: '20px 0 0',
   } as React.CSSProperties,
+  // Compact bullet list — used by the consensus view to render the active
+  // bullish/bearish drivers underneath the synthesis paragraph.
+  list: {
+    listStyle: 'none',
+    margin: '8px 0 0',
+    padding: 0,
+    fontFamily: 'DM Sans, sans-serif',
+    fontSize: 13.5,
+    lineHeight: 1.55,
+  } as React.CSSProperties,
+  listItem: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 9,
+    paddingLeft: 2,
+    marginBottom: 5,
+  } as React.CSSProperties,
+  bullet: {
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    flexShrink: 0,
+    marginTop: 7,
+    boxShadow: '0 0 5px currentColor',
+  } as React.CSSProperties,
 };
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────
@@ -634,18 +767,13 @@ export const IntelligencePage: React.FC<Props> = ({ prices }) => {
 
   const cfg = ASSET_CONFIG[activeAsset];
   const cond = COND[activeAsset];
-  const price = prices?.[activeAsset];
-  const change = price?.changePercent24h ?? 0;
-  const isBull = change >= 0;
+  // Single curated regime call — drives the header pill AND the
+  // right-side Explainer panel default state, so the two never disagree
+  // (the previous setup had the pill on 24h price action and the panel
+  // on driver counts, which produced opposite labels for the same asset).
+  const regime = CONSENSUS_REGIME[activeAsset];
   const activeBull = cond.bull.filter((c) => c.active).length;
   const activeBear = cond.bear.filter((c) => c.active).length;
-
-  const fmtPrice = () => {
-    if (!price) return '—';
-    return activeAsset === 'bitcoin'
-      ? `$${price.price.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-      : `$${price.price.toFixed(2)}`;
-  };
 
   return (
     <div style={IS.page}>
@@ -670,99 +798,56 @@ export const IntelligencePage: React.FC<Props> = ({ prices }) => {
           {/* Main column */}
           <div style={IS.mainCol}>
             <div style={IS.column}>
-              {/* HEADER */}
-              <div
-                style={{
-                  fontFamily: 'DM Sans, sans-serif',
-                  fontSize: 10,
-                  letterSpacing: 3.5,
-                  color: cfg.color,
-                  textTransform: 'uppercase',
-                  marginBottom: 14,
-                }}
-              >
-                {cfg.name} · {cfg.tagline}
-              </div>
-
-              {/* PRICE — clickable */}
-              <button
-                onClick={() => openChartTab(activeAsset)}
-                title={`Open ${cfg.sym} candlestick chart in a new tab`}
-                style={{
-                  fontFamily: 'Cormorant Garamond, serif',
-                  fontSize: 76,
-                  fontWeight: 300,
-                  color: '#ece4d4',
-                  lineHeight: 1,
-                  letterSpacing: -1.5,
-                  background: 'transparent',
-                  border: 'none',
-                  padding: 0,
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  display: 'inline-flex',
-                  alignItems: 'baseline',
-                  gap: 14,
-                  transition: 'color 0.15s, text-shadow 0.15s',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.color = cfg.color;
-                  e.currentTarget.style.textShadow = `0 0 28px ${cfg.color}55`;
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = '#ece4d4';
-                  e.currentTarget.style.textShadow = 'none';
-                }}
-              >
-                {fmtPrice()}
-                <span
-                  style={{
-                    fontFamily: 'DM Sans, sans-serif',
-                    fontSize: 11,
-                    letterSpacing: 2,
-                    color: 'rgba(255,255,255,0.32)',
-                    textTransform: 'uppercase',
-                    marginLeft: 4,
-                  }}
-                >
-                  ↗ Chart
-                </span>
-              </button>
-
-              {/* 24h + Bull/Bear */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 14 }}>
-                <span
-                  style={{
-                    fontFamily: 'DM Sans, sans-serif',
-                    fontSize: 17,
-                    color: isBull ? '#4caf50' : '#ef5350',
-                    fontWeight: 600,
-                  }}
-                >
-                  {isBull ? '▲' : '▼'} {Math.abs(change).toFixed(2)}%
-                </span>
-                <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, color: 'rgba(255,255,255,0.3)', letterSpacing: 1 }}>24h</span>
-                <span
-                  style={{
-                    fontFamily: 'Cormorant Garamond, serif',
-                    fontSize: 22,
-                    fontStyle: 'italic',
-                    color: isBull ? '#4caf50' : '#ef5350',
-                    marginLeft: 8,
-                    opacity: 0.9,
-                  }}
-                >
-                  {isBull ? 'Bull' : 'Bear'}
-                </span>
-                {activeAsset === 'bitcoin' && price?.dominance && (
-                  <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, color: 'rgba(255,255,255,0.4)', marginLeft: 8 }}>
-                    Dominance <span style={{ color: '#f7931a' }}>{price.dominance.toFixed(1)}%</span>
-                  </span>
-                )}
-              </div>
+              {/* HEADER — Bull / Bear / Mixed consensus pill driven by
+                  the curated CONSENSUS_REGIME constant. Same value drives
+                  the side panel so both stay consistent. */}
+              {(() => {
+                const palette = regime === 'Bull'
+                  ? { fg: '#7dd689', bg: 'rgba(76,175,80,0.12)',  bd: 'rgba(76,175,80,0.40)',  gl: 'rgba(76,175,80,0.18)' }
+                  : regime === 'Bear'
+                  ? { fg: '#ff8a86', bg: 'rgba(239,83,80,0.10)',  bd: 'rgba(239,83,80,0.40)',  gl: 'rgba(239,83,80,0.16)' }
+                  : { fg: '#d4a843', bg: 'rgba(212,168,67,0.10)', bd: 'rgba(212,168,67,0.40)', gl: 'rgba(212,168,67,0.16)' };
+                return (
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '8px 18px',
+                      borderRadius: 22,
+                      background: palette.bg,
+                      border: `1px solid ${palette.bd}`,
+                      boxShadow: `0 0 18px ${palette.gl}`,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontFamily: 'DM Sans, sans-serif',
+                        fontSize: 9.5,
+                        letterSpacing: 2.5,
+                        color: 'rgba(255,255,255,0.5)',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      Consensus
+                    </span>
+                    <span
+                      style={{
+                        fontFamily: 'Cormorant Garamond, serif',
+                        fontSize: 26,
+                        fontStyle: 'italic',
+                        color: palette.fg,
+                        lineHeight: 1,
+                      }}
+                    >
+                      {regime}
+                    </span>
+                  </div>
+                );
+              })()}
 
               {/* MARKET CONDITIONS */}
-              <div style={{ marginTop: 38 }}>
+              <div style={{ marginTop: 32 }}>
                 <div
                   style={{
                     display: 'flex',
@@ -871,7 +956,12 @@ export const IntelligencePage: React.FC<Props> = ({ prices }) => {
           </div>
 
           {/* Right-side Explainer panel */}
-          <ExplainerPanel hovered={hoveredDriver} asset={activeAsset} assetColor={cfg.color} />
+          <ExplainerPanel
+            hovered={hoveredDriver}
+            asset={activeAsset}
+            cond={cond}
+            regime={regime}
+          />
         </div>
       </div>
 
