@@ -26,8 +26,7 @@ export interface Prices {
 export interface AssetSentiment {
   marketType: 'bull' | 'bear' | 'neutral';
   reasoning: string;
-  cowenView: string;
-  solowayView: string;
+  analystView: string;
   lastUpdated?: string;
 }
 

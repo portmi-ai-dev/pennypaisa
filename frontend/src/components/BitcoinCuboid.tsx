@@ -33,8 +33,7 @@ interface BitcoinCuboidProps {
   marketSentiment?: {
     marketType: 'bull' | 'bear' | 'neutral';
     reasoning: string;
-    cowenView: string;
-    solowayView: string;
+    analystView: string;
     lastUpdated?: string;
   } | null;
 }

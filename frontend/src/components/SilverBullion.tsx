@@ -21,8 +21,7 @@ interface SilverBullionProps {
   marketSentiment?: {
     marketType: 'bull' | 'bear' | 'neutral';
     reasoning: string;
-    cowenView: string;
-    solowayView: string;
+    analystView: string;
     lastUpdated?: string;
   } | null;
   otherBullionRef?: React.RefObject<THREE.Group>;
@@ -418,8 +417,7 @@ export const SilverBullion = forwardRef<THREE.Group, SilverBullionProps>(({
   const marketSentiment = propSentiment || {
     marketType: 'bull' as const,
     reasoning: "Silver is outperforming gold as the gold-to-silver ratio collapses toward 60. The combination of a massive short squeeze on the COMEX and unprecedented industrial demand for green energy infrastructure is creating a 'perfect storm' for silver prices.",
-    cowenView: "Silver has officially entered the parabolic phase of the cycle. We've cleared the multi-year resistance at $35 and are now using it as support. The velocity of this move suggests a test of the $50 level is imminent.",
-    solowayView: "The breakout is confirmed. We are seeing a massive volume spike as institutions rotate into silver. My next target is $48.50, but the real fireworks start once we clear the all-time highs. This is a once-in-a-generation setup.",
+    analystView: "Silver has entered the parabolic phase — multi-year resistance at $35 is now support, breakout confirmed on volume. Next target $48.50, with a test of $50 imminent and the real move starting once all-time highs clear.",
     lastUpdated: "APRIL 14, 2026"
   };
   const [isJewelryExpanded, setIsJewelryExpanded] = useState(false);

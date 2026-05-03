@@ -66,7 +66,7 @@ const CHAR: Record<AssetKey, CharacterCfg> = {
 //   3. Live spot for the OTHER two assets (cross-asset awareness — so e.g.
 //      Bitcoin can casually reference what Gold is doing today)
 //   4. Today's analyst sentiment classification (bull/bear/neutral) + the
-//      Cowen/Soloway summary lines, so tone adapts to the market read
+//      analyst view summary, so tone adapts to the market read
 //   5. Style/length guardrails
 function buildSystemPrompt(
   active: AssetKey,
@@ -106,8 +106,7 @@ function buildSystemPrompt(
 
   const sentimentBlock = sentiment
     ? `\n\nToday's market read for you: ${sentiment.marketType.toUpperCase()}. ${sentiment.reasoning}` +
-      (sentiment.cowenView ? ` Cowen says: "${sentiment.cowenView}"` : '') +
-      (sentiment.solowayView ? ` Soloway says: "${sentiment.solowayView}"` : '') +
+      (sentiment.analystView ? ` Analyst view: "${sentiment.analystView}"` : '') +
       ` Let this colour your tone — ${
         sentiment.marketType === 'bull'
           ? 'measured confidence, not euphoria'

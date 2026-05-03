@@ -20,16 +20,14 @@ class KeyLevels(BaseModel):
 class AssetSentiment(BaseModel):
     """Analyst-grade sentiment summary for a single asset.
 
-    Legacy fields (`marketType`, `reasoning`, `cowenView`, `solowayView`,
-    `lastUpdated`) are preserved for the existing 3D hover panels. Extra
-    fields are optional enrichments — the frontend can opt in progressively.
+    Core fields (`marketType`, `reasoning`, `analystView`, `lastUpdated`)
+    drive the 3D hover panels and the Intelligence page. Extra fields are
+    optional enrichments — the frontend can opt in progressively.
     """
 
-    # --- Legacy fields (consumed by the in-scene hover panels today) ---
     marketType: MarketType
     reasoning: str
-    cowenView: str
-    solowayView: str
+    analystView: str
     lastUpdated: str | None = None
 
     # --- Enriched analyst fields ---

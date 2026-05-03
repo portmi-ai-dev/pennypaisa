@@ -8,9 +8,8 @@ multi-dimensional analyst brief:
 * Technical structure (trend, key levels, momentum)
 * Fundamentals unique to the asset (central-bank flows for gold, industrial
   demand for silver, on-chain + ETF flows for Bitcoin)
-* Analyst personas — Benjamin Cowen (macro/cycle) and Gareth Soloway (technical)
-  mapped to their real expertise so the output reads like a genuine consensus
-  rather than two identical blurbs.
+* Analyst view — a single fused institutional take blending macro/cycle context
+  with technical structure, so the output reads like one coherent desk brief.
 
 Price context is always injected so the model reasons about *current* levels
 rather than stale training data.
@@ -99,8 +98,7 @@ _SCHEMA_SPEC = """Respond with pure JSON (no markdown, no prose, no code fences)
   "confidence": "low" | "medium" | "high",
   "horizon": "short-term" | "medium-term" | "long-term",
   "reasoning": "<=35 word thesis synthesising macro + technical + flows. No hedging filler.",
-  "cowenView": "<=30 word Benjamin-Cowen-style take: cycle position, macro risk assets, key moving averages, risk-on vs risk-off.",
-  "solowayView": "<=30 word Gareth-Soloway-style take: precise technical levels, chart patterns, targets, and invalidations.",
+  "analystView": "<=55 word institutional analyst take fusing macro/cycle context (cycle position, key moving averages, risk-on/off) with precise technical structure (levels, patterns, targets, invalidations).",
   "technicalSignal": "<=20 word read on trend + momentum + nearest level to watch.",
   "macroContext": "<=25 word description of the dominant macro driver right now (Fed, DXY, liquidity, geopolitics).",
   "keyLevels": { "support": "<nearest major support>", "resistance": "<nearest major resistance>" },
@@ -173,8 +171,8 @@ def build_prompt(asset: Asset, prices: dict[str, Any] | None = None) -> str:
         f"{frame}\n"
         f"DATE: {today}. Use only information valid as of today — no stale narratives.\n"
         f"{price_ctx}\n\n"
-        "Ground your view in the most recent public analysis from Benjamin Cowen (macro / cycle models) "
-        "and Gareth Soloway (technical / chart structure). Do NOT quote them verbatim — synthesise their "
-        "stated frameworks into the views you attribute to each.\n\n"
+        "Synthesise current macro/cycle reasoning (Benjamin-Cowen-style frameworks) with precise "
+        "technical structure (Gareth-Soloway-style level work) into ONE fused analyst view. Do NOT "
+        "attribute or quote — produce a single coherent institutional take.\n\n"
         f"{_SCHEMA_SPEC}"
     )

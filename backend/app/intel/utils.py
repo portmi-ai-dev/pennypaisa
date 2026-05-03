@@ -71,8 +71,7 @@ def _response_schema() -> types.Schema:
         required=[
             "marketType",
             "reasoning",
-            "cowenView",
-            "solowayView",
+            "analystView",
         ],
         properties={
             "marketType": types.Schema(type="STRING", enum=["bull", "bear", "neutral"]),
@@ -82,8 +81,7 @@ def _response_schema() -> types.Schema:
                 enum=["short-term", "medium-term", "long-term"],
             ),
             "reasoning": str_type,
-            "cowenView": str_type,
-            "solowayView": str_type,
+            "analystView": str_type,
             "technicalSignal": str_type,
             "macroContext": str_type,
             "keyLevels": types.Schema(
@@ -187,8 +185,7 @@ def _parse_sentiment(text: str) -> AssetSentiment:
         raise ValueError("Gemini payload is not an object")
 
     reasoning = _trim_words(str(payload.get("reasoning", "")), 40)
-    cowen = _trim_words(str(payload.get("cowenView", "")), 32)
-    soloway = _trim_words(str(payload.get("solowayView", "")), 32)
+    analyst = _trim_words(str(payload.get("analystView", "")), 60)
     technical = payload.get("technicalSignal")
     macro = payload.get("macroContext")
 
@@ -215,8 +212,7 @@ def _parse_sentiment(text: str) -> AssetSentiment:
     normalized: dict[str, Any] = {
         "marketType": market_type,
         "reasoning": reasoning or "Signals are mixed; conviction low.",
-        "cowenView": cowen or "Watching macro structure; no trade.",
-        "solowayView": soloway or "No high-probability setup yet.",
+        "analystView": analyst or "Watching macro structure and technical levels; no high-conviction setup yet.",
         "confidence": confidence,
         "horizon": horizon,
         "technicalSignal": _trim_words(str(technical), 24) if technical else None,

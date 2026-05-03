@@ -26,8 +26,8 @@ const PILLARS = [
     to: '/app/intel',
     label: 'Intelligence',
     accent: '#4a8fe8',
-    title: 'Two analysts, one panel.',
-    body: 'A bull and a bear — Cowen and Soloway — argue every move with macro context, technical signals, key levels and catalysts. Updated hourly.',
+    title: 'One analyst, one panel.',
+    body: 'A fused institutional take — macro context, technical signals, key levels and catalysts in a single analyst view. Updated hourly.',
     icon: <Activity size={18} strokeWidth={1.6} />,
   },
   {

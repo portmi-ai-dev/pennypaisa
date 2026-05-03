@@ -162,17 +162,12 @@ export const IntelPopup: React.FC<IntelPopupProps> = ({
             </p>
           )}
 
-          {/* Analyst cards */}
+          {/* Analyst card */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <AnalystCard
-              name="Benjamin Cowen"
+              name="Analyst View"
               accent={accent.primary}
-              body={sentiment.cowenView}
-            />
-            <AnalystCard
-              name="Gareth Soloway"
-              accent={accent.secondary}
-              body={sentiment.solowayView}
+              body={sentiment.analystView}
             />
           </div>
 
