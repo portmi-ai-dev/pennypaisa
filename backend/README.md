@@ -94,83 +94,85 @@ Real-time aggregated financial data with multi-provider fallback:
 
 ---
 
-## Configuration
-
-### Environment Variables
-
-Create a `.env` file based on `.env.example`:
-
-```bash
-# Redis Cloud (required for chat caching)
-REDIS_HOST=redis-xxxxx.cloud.redislabs.com
-REDIS_PORT=12155
-REDIS_USERNAME=default
-REDIS_PASSWORD=your-password
-REDIS_SSL=true
-REDIS_SSL_CERT_REQS=required
-REDIS_SSL_FALLBACK=true
-
-# Neon Postgres (optional for persistence)
-NEON_DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require
-
-# Google Gemini (required for chat)
-GEMINI_API_KEY=your-api-key
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_ENABLE_GROUNDING=true
-
-# External API checks (optional)
-EXTERNAL_API_URLS=https://api.example.com/health
-```
-
-### Configuration Details
-
-#### Redis Cloud
-- Use the **TLS port** (typically `6380`)
-- `REDIS_SSL=true` for encrypted connections
-- `REDIS_SSL_CERT_REQS=required` for cert validation (set to `none` if errors)
-- `REDIS_SSL_FALLBACK=true` retries without TLS if handshake fails
-
-#### Neon Postgres
-- Leave empty to disable database features
-- Full PostgreSQL support via async `asyncpg`
-
-#### Google Gemini
-- Get API key from [AI Studio](https://aistudio.google.com)
-- `GEMINI_ENABLE_GROUNDING=true` enables real-time web search
-- `GEMINI_MODEL=gemini-2.5-flash` (default, supports grounding)
-
----
 
 ## Project Structure
 
 ```
 backend/
-├── app/
-│   ├── main.py                 # FastAPI app entry point
-│   ├── api/
-│   │   ├── router.py           # Health check routes
-│   │   ├── chat.py             # Chat endpoint
-│   │   └── routes/prices.py    # Price endpoint
-│   ├── core/
-│   │   ├── config.py           # Env settings
-│   │   ├── lifespan.py         # Startup/shutdown
-│   │   ├── http.py             # HTTP client
-│   │   ├── redis_client.py     # Redis singleton
-│   │   ├── database.py         # DB pool
-│   │   └── gemini.py           # Gemini helper
-│   ├── health/
-│   │   ├── sever-health.py
-│   │   ├── redis-health.py
-│   │   ├── db-health.py
-│   │   └── gemini-health.py
-│   ├── models/prices.py        # Response models
-│   └── services/
-│       ├── chat.py             # Chat logic
-│       ├── aggregator.py       # Price aggregation
-│       └── providers/          # API providers
-├── .env.example
-├── requirements.txt
-└── README.md
+├── .env                                 # Local secrets (gitignored)
+├── .env.example                         # Template env file
+├── keypoints.md                         # Internal backend notes and keypoints
+├── README.md                            # Backend documentation
+├── requirements.txt                     # Python dependencies
+├── app/                                 # FastAPI application package
+│   ├── __pycache__/                     # Auto-generated Python bytecode
+│   ├── main.py                          # FastAPI app entrypoint + router wiring
+│   ├── api/                             # Request routing layer
+│   │   ├── __pycache__/                 # Auto-generated Python bytecode
+│   │   ├── __init__.py                  # Exports the shared API router
+│   │   ├── chat.py                      # /chat endpoints (Gemini chat)
+│   │   ├── router.py                    # Health-router loader
+│   │   └── routes/                      # Feature API routes
+│   │       ├── __pycache__/             # Auto-generated Python bytecode
+│   │       ├── __init__.py              # Routes package marker
+│   │       ├── intel.py                 # /api/intel sentiment endpoints
+│   │       ├── prices.py                # /api/prices + chart/historical data
+│   │       ├── yt_backfill.py           # YouTube backfill admin endpoints
+│   │       └── yt_transcriber.py        # YouTube transcript lookup endpoint
+│   ├── core/                            # Infrastructure & shared clients
+│   │   ├── __pycache__/                 # Auto-generated Python bytecode
+│   │   ├── __init__.py                  # Core package marker
+│   │   ├── config.py                    # Env settings (Pydantic Settings)
+│   │   ├── database.py                  # Async Postgres pool helpers
+│   │   ├── gemini.py                    # Gemini client factory
+│   │   ├── http.py                      # Shared httpx client config
+│   │   ├── lifespan.py                  # Startup/shutdown + background tasks
+│   │   ├── rate_limit.py                # SlowAPI limiter singleton
+│   │   └── redis_client.py              # Redis connection helpers
+│   ├── health/                          # Health check endpoints
+│   │   ├── __pycache__/                 # Auto-generated Python bytecode
+│   │   ├── api-heatlh.py                # External API health checks (typo in filename)
+│   │   ├── db-health.py                 # Neon Postgres health check
+│   │   ├── gemini-health.py             # Gemini API health check
+│   │   ├── redis-health.py              # Redis health check
+│   │   └── sever-health.py              # Server liveness check (typo in filename)
+│   ├── intel/                           # Gemini-driven market intelligence
+│   │   ├── __pycache__/                 # Auto-generated Python bytecode
+│   │   ├── _common.py                   # SWR cache orchestration utilities
+│   │   ├── aggregator.py                # Aggregate sentiment for all assets
+│   │   ├── btc.py                       # BTC/crypto sentiment fetcher
+│   │   ├── cache.py                     # Postgres cache + history storage
+│   │   ├── gold.py                      # Gold sentiment fetcher
+│   │   ├── prompts.py                   # Analyst-grade prompt builders
+│   │   ├── refresher.py                 # Hourly sentiment refresher task
+│   │   ├── schema.py                    # DDL for intel cache/history tables
+│   │   ├── silver.py                    # Silver sentiment fetcher
+│   │   └── utils.py                     # Gemini response parsing + validation
+│   ├── models/                          # Pydantic response models
+│   │   ├── __pycache__/                 # Auto-generated Python bytecode
+│   │   ├── __init__.py                  # Models package marker
+│   │   ├── intel.py                     # Sentiment response schemas
+│   │   └── prices.py                    # Prices response schema
+│   ├── services/                        # Core business logic services
+│   │   ├── __pycache__/                 # Auto-generated Python bytecode
+│   │   ├── __init__.py                  # Services package marker
+│   │   ├── aggregator.py                # Price aggregation logic
+│   │   ├── chat.py                      # Gemini chat service + quota handling
+│   │   └── providers/                   # Price data providers
+│   │       ├── __init__.py              # Providers package marker
+│   │       ├── binance.py               # Binance price fetcher
+│   │       ├── coingecko.py             # CoinGecko price fetcher
+│   │       ├── coinlore.py              # CoinLore price fetcher
+│   │       ├── gold_api.py              # Gold API price fetcher
+│   │       └── kitco.py                 # Kitco HTML parser for metal changes
+│   └── yt_data_collector/               # YouTube ID + transcript ingestion
+│       ├── __pycache__/                 # Auto-generated Python bytecode
+│       ├── __init__.py                  # Package marker + overview docstring
+│       ├── 1_month_video_ids.py         # CLI wrapper for last-month scraping
+│       ├── one_month_video_ids.py       # Scraper for last-month video IDs
+│       ├── yt_transcriber.py            # URL -> transcript resolver (YT/AssemblyAI)
+│       ├── video_id_corn.py             # Hourly cron + transcript ingest (typo in filename)
+│       └── archive/                     # Archived scripts / outputs
 ```
 
 ---
