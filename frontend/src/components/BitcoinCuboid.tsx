@@ -108,7 +108,21 @@ const SentimentDisplay: React.FC<{ marketType: 'bull' | 'bear' | 'neutral' }> = 
           <meshBasicMaterial color="#222230" transparent opacity={0.55} />
         </mesh>
         <Text position={[0, 0.15, 0]} fontSize={0.7} color="#cccccc" fontWeight="bold" font={INTER_FONT}>~</Text>
-        <Text position={[0, -0.55, 0]} fontSize={0.22} color="#cccccc" fontWeight="bold" font={INTER_FONT}>NEUTRAL MOOD</Text>
+        {/* Shortened from "NEUTRAL MOOD" — at the previous fontSize/letterSpacing
+            the 12-char string overflowed the 1.95-wide cuboid face. */}
+        <Text
+          position={[0, -0.55, 0]}
+          fontSize={0.20}
+          color="#cccccc"
+          fontWeight="bold"
+          font={INTER_FONT}
+          letterSpacing={0.06}
+          maxWidth={1.7}
+          anchorX="center"
+          anchorY="middle"
+        >
+          NEUTRAL
+        </Text>
       </group>
     );
   }
@@ -146,20 +160,26 @@ const SentimentDisplay: React.FC<{ marketType: 'bull' | 'bear' | 'neutral' }> = 
           <meshBasicMaterial color="#000000" />
         </mesh>
       </group>
-      {/* Mood label */}
+      {/* Mood label — single word ("BULLISH" / "BEARISH") instead of the
+          previous "BULLISH MOOD" / "BEARISH MOOD". With fontSize 0.30 and
+          letterSpacing 0.12, the longer string measured ~3.5 units wide and
+          spilled outside the 1.95-wide face. The animal silhouette above it
+          already conveys "mood" — the word is redundant. `maxWidth` clamps
+          the renderer if a future longer label is ever passed in. */}
       <Text
         position={[0, -0.70, 0]}
-        fontSize={0.30}
+        fontSize={0.26}
         color={accent}
         fontWeight="bold"
         anchorX="center"
         anchorY="middle"
         font={INTER_FONT}
-        letterSpacing={0.12}
+        letterSpacing={0.08}
+        maxWidth={1.7}
         outlineWidth={0.005}
         outlineColor="#000000"
       >
-        {isBull ? 'BULLISH MOOD' : 'BEARISH MOOD'}
+        {isBull ? 'BULLISH' : 'BEARISH'}
       </Text>
       {/* Faint accent underline */}
       <mesh position={[0, -0.88, 0]}>
