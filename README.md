@@ -17,6 +17,7 @@ An immersive 3D market intelligence platform for Gold, Silver, and Bitcoin. The 
 - **Framework**: [FastAPI](https://fastapi.tiangolo.com/)
 - **Runtime**: Python 3.11+
 - **HTTP Client**: [httpx](https://www.python-httpx.org/)
+- **Background Worker**: [arq](https://arq-docs.helpmanual.io/) on Redis — runs YouTube scraping (yt-dlp + AssemblyAI + transcript ingest) out of the FastAPI process so the API stays responsive under heavy compute.
 
 ---
 
@@ -35,13 +36,38 @@ An immersive 3D market intelligence platform for Gold, Silver, and Bitcoin. The 
 ├── frontend/                 # Vite + React client
 │   ├── src/
 │   └── vite.config.ts
-├── backend/                  # FastAPI service
+├── backend/                  # FastAPI service + arq worker (same package)
 │   ├── app/
+│   │   ├── main.py           # FastAPI entrypoint (api.gilver.ai)
+│   │   ├── worker.py         # arq worker entrypoint (internal, no DNS)
+│   │   └── ...
 │   ├── requirements.txt
 │   └── .env.example
-├── package.json              # Monorepo scripts
+├── package.json              # Monorepo scripts (api + worker + web)
 └── README.md
 ```
+
+### Process model
+
+In production we run **three** processes off the same `backend/` package:
+
+| Process       | Binds to              | Public? | Command                                  |
+|---------------|-----------------------|---------|------------------------------------------|
+| Frontend      | `gilver.ai`           | Yes     | static build served from CDN             |
+| API           | `api.gilver.ai`       | Yes     | `uvicorn app.main:app`                   |
+| Worker        | _(internal-only)_     | No      | `arq app.worker.WorkerSettings`          |
+| Redis         | _(internal-only)_     | No      | managed (Redis Cloud) or VPC instance    |
+
+The **worker** owns all heavy YouTube workloads — transcript fetches,
+AssemblyAI fallbacks, and the hourly channel-sync cron. The **API**
+only enqueues jobs onto Redis and reads results back, so a long-running
+scrape never pins the API event loop. Other workloads (Gemini intel
+refresher, price aggregation, chat) still live inside the FastAPI
+process.
+
+In dev we mirror this layout via `concurrently` — a single `npm run
+dev` boots all three locally against the same Redis the worker uses in
+prod.
 
 ---
 
@@ -55,6 +81,29 @@ Returns a unified JSON payload:
 - `goldWeeklyChangePercent`, `silverWeeklyChangePercent`, `btcWeeklyChangePercent`
 - `btcVolume24h`, `btcVolumeChangePercent`
 - `isWeekend`, `timestamp`, `source`
+
+### YouTube scraping (worker-backed, async)
+
+All YouTube routes follow an **enqueue + poll** contract — the API
+returns a `job_id` immediately, the arq worker does the heavy lifting,
+and the client polls for the result.
+
+| Method | Path                              | Action                                                  |
+|--------|-----------------------------------|---------------------------------------------------------|
+| POST   | `/api/yt/transcript`              | Enqueue transcript fetch for a video URL → `{job_id}`   |
+| GET    | `/api/yt/transcript/{job_id}`     | Poll status / retrieve transcript                       |
+| POST   | `/api/yt/backfill`                | Enqueue bulk backfill (default 90 days)                 |
+| POST   | `/api/yt/sync-now`                | Enqueue immediate channel sync (default 30 days)        |
+| GET    | `/api/yt/job/{job_id}`            | Poll any backfill / sync job                            |
+
+Status response shape:
+```json
+{ "job_id": "...", "status": "queued|in_progress|completed|failed|not_found",
+  "result": { ... } | null, "error": "..." | null }
+```
+
+The hourly channel-sync that used to run inside FastAPI now runs as an
+arq cron at minute `:05` of every hour inside the worker process.
 
 ---
 
@@ -79,7 +128,27 @@ cp .env.example .env
 npm run dev
 ```
 
-Frontend runs at `http://localhost:5173` and the backend at `http://127.0.0.1:8000`.
+`npm run dev` boots **three** processes via `concurrently`:
+
+- `api`     → `uvicorn app.main:app --reload` on `http://127.0.0.1:8000`
+- `worker`  → `arq app.worker.WorkerSettings` (consumes YouTube jobs from Redis)
+- `web`     → `vite` on `http://localhost:5173`
+
+The worker needs the same Redis credentials the API already uses (see
+`backend/.env`) — no extra config required for dev.
+
+Run individual pieces during debugging:
+```bash
+npm run dev:backend   # API only
+npm run dev:worker    # arq worker only
+npm run dev:frontend  # Vite only
+```
+
+Production:
+```bash
+npm run start         # API   (api.gilver.ai)
+npm run start:worker  # Worker (internal)
+```
 
 ---
 
@@ -88,3 +157,5 @@ Frontend runs at `http://localhost:5173` and the backend at `http://127.0.0.1:80
 - The frontend uses a Vite proxy to reach the FastAPI backend in development.
 - Health check: `GET /health/server`.
 - If you don’t have a database configured, startup continues with a warning.
+- The arq worker shares Redis with the API; if Redis is down the YouTube
+  routes return `503` from the enqueue call — the API itself stays up.

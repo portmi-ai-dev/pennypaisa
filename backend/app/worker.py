@@ -1,0 +1,215 @@
+"""arq worker process — runs YouTube scraping jobs out-of-band from FastAPI.
+
+Why a separate worker:
+    yt-dlp downloads, ffmpeg transcoding, and AssemblyAI long-polling can
+    each take 30s-6min per call. Running them in the API process pins
+    threads from uvicorn's pool, eats RAM, and blocks the event loop on
+    sync stretches. Moving them here keeps `api.gilver.ai` responsive
+    while the worker box absorbs the heavy CPU/IO bursts.
+
+Job inventory (this slice — YouTube only):
+    * ``transcript_job``       — single video URL → transcript (on-demand).
+    * ``yt_backfill_job``      — bulk backfill (one-time admin trigger).
+    * ``yt_sync_now_job``      — manual trigger of the hourly sync logic.
+
+Cron:
+    * ``yt_hourly_cron``       — replaces the in-process loop that used
+      to live in ``app.core.lifespan``. Fires once per hour to scrape
+      new video IDs + transcribe.
+
+Other workloads (Gemini intel refresher) intentionally stay in-process
+inside FastAPI's lifespan for now — only YouTube was moved.
+
+Run locally:
+    arq app.worker.WorkerSettings
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+from arq.connections import RedisSettings
+from arq.cron import cron
+
+from app.core.config import settings
+from app.core.database import close_db, connect_db
+from app.yt_data_collector.video_id_corn import (
+    ensure_schema as ensure_yt_schema,
+    resolve_channel_urls_from_env,
+    sync_latest_video_ids_and_transcripts,
+    sync_video_ids_and_transcripts,
+)
+from app.yt_data_collector.yt_transcriber import (
+    TranscriptResult,
+    get_transcript_for_url,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job functions — each takes ``ctx`` (arq context) as first positional arg.
+# Return values are JSON-serialised and stored in Redis under the job's
+# result key, retrievable via ``Job(job_id, redis).result()``.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def transcript_job(ctx: dict[str, Any], video_url: str) -> dict[str, Any]:
+    """Resolve a single YouTube URL to its transcript.
+
+    `get_transcript_for_url` is sync (yt-dlp + requests + AssemblyAI poll)
+    so we hand it to a thread to avoid blocking the worker's event loop.
+    """
+    result: TranscriptResult = await asyncio.to_thread(get_transcript_for_url, video_url)
+    return {
+        "videoId": result.video_id,
+        "source": result.source,
+        "text": result.text,
+    }
+
+
+async def yt_backfill_job(ctx: dict[str, Any], max_age_days: int) -> dict[str, int]:
+    """Backfill video IDs + transcripts going back ``max_age_days``."""
+    return await sync_video_ids_and_transcripts(
+        channel_urls=resolve_channel_urls_from_env(),
+        max_age_days=max_age_days,
+    )
+
+
+async def yt_sync_now_job(ctx: dict[str, Any], max_age_days: int = 30) -> dict[str, int]:
+    """One-shot run of the hourly sync (manual trigger)."""
+    return await sync_video_ids_and_transcripts(
+        channel_urls=resolve_channel_urls_from_env(),
+        max_age_days=max_age_days,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cron job — replaces the in-process ``run_video_id_corn`` loop that used
+# to be spawned from ``app.core.lifespan``. Fires every hour at minute 5
+# (slight offset so it doesn't collide with other top-of-hour work).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def yt_hourly_cron(ctx: dict[str, Any]) -> None:
+    """Hourly: scrape new video IDs + transcribe missing transcripts."""
+    try:
+        await sync_latest_video_ids_and_transcripts(
+            channel_urls=resolve_channel_urls_from_env()
+        )
+    except Exception as exc:
+        logger.warning("yt cron tick failed: %s", exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Worker lifecycle — boot the asyncpg pool once per worker process so jobs
+# can `async with get_db() as conn:` immediately.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def startup(ctx: dict[str, Any]) -> None:
+    if settings.NEON_DATABASE_URL:
+        await connect_db()
+        await ensure_yt_schema()
+        logger.info("worker: db pool + yt schema ready")
+    else:
+        logger.warning("worker: NEON_DATABASE_URL unset — yt jobs will fail")
+
+
+async def shutdown(ctx: dict[str, Any]) -> None:
+    await close_db()
+
+
+def _probe_ssl(use_ssl: bool) -> bool:
+    """Sync ping to decide whether SSL handshake actually works.
+
+    Mirrors the ``REDIS_SSL_FALLBACK`` behaviour of
+    ``app.core.redis_client.connect_redis``: try SSL; if the handshake
+    fails (Redis Cloud often serves TLS and non-TLS on different ports
+    and the user's port may not be TLS), fall back transparently rather
+    than crash the worker.
+
+    Sync probe is used because ``WorkerSettings.redis_settings`` is
+    evaluated at class-definition time, before any event loop exists.
+    """
+    import redis  # sync client used only for the probe
+
+    try:
+        client = redis.Redis(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            username=settings.REDIS_USERNAME,
+            password=settings.REDIS_PASSWORD,
+            ssl=use_ssl,
+            ssl_cert_reqs=(
+                "none" if settings.REDIS_SSL_CERT_REQS.lower() == "none" else "required"
+            ) if use_ssl else None,
+            socket_connect_timeout=3,
+        )
+        client.ping()
+        client.close()
+        return True
+    except Exception:
+        return False
+
+
+def _build_redis_settings() -> RedisSettings:
+    """Translate our Pydantic Redis config into arq's RedisSettings.
+
+    Mirrors ``app.core.redis_client.connect_redis`` — same host/port/SSL
+    semantics so the worker talks to the same Redis instance the API uses.
+
+    NOTE: ``ssl_cert_reqs`` must be the *string* form (``"required"`` /
+    ``"none"``), not an ``ssl.VerifyMode`` enum. redis-py's
+    ``RedisSSLContext`` only branches on `None` or `str` and silently
+    drops anything else, which then fails later with
+    ``AttributeError: 'RedisSSLContext' object has no attribute 'cert_reqs'``.
+    """
+    use_ssl = settings.REDIS_SSL
+    if use_ssl and settings.REDIS_SSL_FALLBACK and not _probe_ssl(True):
+        logger.warning(
+            "worker: TLS handshake to Redis failed; falling back to non-TLS"
+        )
+        use_ssl = False
+
+    ssl_cert_reqs = (
+        "none" if settings.REDIS_SSL_CERT_REQS.lower() == "none" else "required"
+    )
+
+    return RedisSettings(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        username=settings.REDIS_USERNAME,
+        password=settings.REDIS_PASSWORD,
+        ssl=use_ssl,
+        ssl_cert_reqs=ssl_cert_reqs if use_ssl else "none",
+    )
+
+
+class WorkerSettings:
+    """arq worker configuration. Run with ``arq app.worker.WorkerSettings``."""
+
+    redis_settings = _build_redis_settings()
+    functions = [transcript_job, yt_backfill_job, yt_sync_now_job]
+    cron_jobs = [
+        # Minute 5 of every hour — small offset away from :00 to avoid
+        # piling onto whatever other systems run at the top of the hour.
+        cron(yt_hourly_cron, minute={5}),
+    ]
+    on_startup = startup
+    on_shutdown = shutdown
+
+    # Cap concurrent jobs per worker process. yt-dlp + ffmpeg are CPU-heavy;
+    # 2 keeps a single-vCPU box responsive. Bump on bigger boxes.
+    max_jobs = 2
+
+    # Keep job results in Redis for 1h so the API's polling endpoint can
+    # still read the result after the job finishes. After 1h the result
+    # is GC'd from Redis.
+    keep_result = 60 * 60
+
+    # Per-job hard timeout. Even worst-case AssemblyAI polling caps at
+    # ~6min; give ourselves headroom for retries + audio download.
+    job_timeout = 60 * 15

@@ -44,6 +44,35 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Server runs on `http://localhost:8000` by default.
 
+### Run the Worker
+
+YouTube scraping (transcript fetches, AssemblyAI fallback, hourly channel
+sync) runs in a separate **arq** worker process so heavy compute never
+blocks the API event loop. The worker shares the same Redis instance as
+the API and reads the same `.env` file.
+
+```bash
+# Development
+arq app.worker.WorkerSettings
+
+# Production (run as its own container / systemd unit)
+arq app.worker.WorkerSettings
+```
+
+In production the worker is **internal-only** — it has no public DNS,
+the API talks to it indirectly via Redis. The architectural split:
+
+```
+gilver.ai (web) ──→ api.gilver.ai (API) ──enqueue──→ Redis ←─poll── Worker (internal)
+                                                                        │
+                                                                        └──→ Postgres
+```
+
+Run all three locally with one command from the repo root:
+```bash
+npm run dev   # boots api + worker + web together
+```
+
 ---
 
 ## API Endpoints
@@ -92,6 +121,36 @@ Real-time aggregated financial data with multi-provider fallback:
   - Fetches from: Gold API, Binance, CoinGecko, CoinLore, Kitco
   - Returns: Gold, silver, BTC prices with 24h changes, market cap, dominance
 
+### YouTube Endpoints (worker-backed)
+
+All YouTube scraping is offloaded to the arq worker process. Routes return
+a `job_id` immediately and the client polls for the result.
+
+- **`POST /api/yt/transcript`** – Enqueue transcript fetch for a YouTube URL
+  ```bash
+  curl -X POST http://localhost:8000/api/yt/transcript \
+    -H "Content-Type: application/json" \
+    -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}'
+  ```
+  - Request: `{ "url": "..." }`
+  - Response: `{ "job_id": "...", "status": "queued" }`
+
+- **`GET /api/yt/transcript/{job_id}`** – Poll status / fetch result
+  - Response shape:
+    ```json
+    { "job_id": "...",
+      "status": "queued|in_progress|completed|failed|not_found",
+      "result": { "videoId": "...", "source": "youtube|assemblyai", "text": "..." } | null,
+      "error": "..." | null }
+    ```
+
+- **`POST /api/yt/backfill`** – Enqueue bulk backfill (defaults to 90 days)
+- **`POST /api/yt/sync-now`** – Enqueue immediate channel sync (defaults to 30 days)
+- **`GET /api/yt/job/{job_id}`** – Poll any backfill / sync job (same shape as above)
+
+The hourly channel sync that previously ran inside FastAPI's lifespan
+now runs as an arq cron at minute `:05` of every hour inside the worker.
+
 ---
 
 
@@ -107,6 +166,7 @@ backend/
 ├── app/                                 # FastAPI application package
 │   ├── __pycache__/                     # Auto-generated Python bytecode
 │   ├── main.py                          # FastAPI app entrypoint + router wiring
+│   ├── worker.py                        # arq worker entrypoint (YouTube jobs + hourly cron)
 │   ├── api/                             # Request routing layer
 │   │   ├── __pycache__/                 # Auto-generated Python bytecode
 │   │   ├── __init__.py                  # Exports the shared API router
@@ -117,11 +177,12 @@ backend/
 │   │       ├── __init__.py              # Routes package marker
 │   │       ├── intel.py                 # /api/intel sentiment endpoints
 │   │       ├── prices.py                # /api/prices + chart/historical data
-│   │       ├── yt_backfill.py           # YouTube backfill admin endpoints
-│   │       └── yt_transcriber.py        # YouTube transcript lookup endpoint
+│   │       ├── yt_backfill.py           # YouTube backfill/sync routes (enqueue + poll)
+│   │       └── yt_transcriber.py        # YouTube transcript route (enqueue + poll)
 │   ├── core/                            # Infrastructure & shared clients
 │   │   ├── __pycache__/                 # Auto-generated Python bytecode
 │   │   ├── __init__.py                  # Core package marker
+│   │   ├── arq_client.py                # Shared arq Redis pool (API → worker enqueue)
 │   │   ├── config.py                    # Env settings (Pydantic Settings)
 │   │   ├── database.py                  # Async Postgres pool helpers
 │   │   ├── gemini.py                    # Gemini client factory
@@ -165,13 +226,13 @@ backend/
 │   │       ├── coinlore.py              # CoinLore price fetcher
 │   │       ├── gold_api.py              # Gold API price fetcher
 │   │       └── kitco.py                 # Kitco HTML parser for metal changes
-│   └── yt_data_collector/               # YouTube ID + transcript ingestion
+│   └── yt_data_collector/               # YouTube ID + transcript ingestion (called from worker)
 │       ├── __pycache__/                 # Auto-generated Python bytecode
 │       ├── __init__.py                  # Package marker + overview docstring
 │       ├── 1_month_video_ids.py         # CLI wrapper for last-month scraping
 │       ├── one_month_video_ids.py       # Scraper for last-month video IDs
 │       ├── yt_transcriber.py            # URL -> transcript resolver (YT/AssemblyAI)
-│       ├── video_id_corn.py             # Hourly cron + transcript ingest (typo in filename)
+│       ├── video_id_corn.py             # Sync logic invoked by worker cron + jobs
 │       └── archive/                     # Archived scripts / outputs
 ```
 
@@ -179,10 +240,11 @@ backend/
 
 ## Design Patterns
 
-**Singleton Pattern**: Redis, HTTP client, DB pool (one per app lifetime)
+**Singleton Pattern**: Redis, HTTP client, DB pool, arq pool (one per app lifetime)
 **Dependency Injection**: FastAPI `Depends()` + `request.app.state`
 **Multi-Provider Fallback**: Query 5 providers in parallel, use defaults on failure
 **Async/Await**: All I/O is non-blocking
+**Worker Offload**: Heavy YouTube compute runs in a dedicated arq worker process; the API only enqueues + polls so a long scrape never pins the FastAPI event loop.
 
 ---
 
@@ -206,13 +268,39 @@ backend/
 
 ## Deployment
 
+The same image runs both the API and the worker — the entrypoint
+command is the only difference. In prod the API binds to `api.gilver.ai`
+and the worker has **no public DNS** (internal-only, talks to the API
+through Redis).
+
 ```dockerfile
+# Shared base
 FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
+
+# Override CMD per process at deploy time:
+#   API     → uvicorn app.main:app --host 0.0.0.0 --port 8000
+#   Worker  → arq app.worker.WorkerSettings
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+Example `docker compose` for a self-hosted deploy:
+
+```yaml
+services:
+  api:
+    image: pennypaisa-backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    ports: ["8000:8000"]   # behind your TLS proxy → api.gilver.ai
+  worker:
+    image: pennypaisa-backend
+    command: arq app.worker.WorkerSettings
+    env_file: .env
+    # no ports — internal only
 ```
 
 ---
