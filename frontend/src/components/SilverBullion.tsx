@@ -24,7 +24,7 @@ interface SilverBullionProps {
     analystView: string;
     lastUpdated?: string;
   } | null;
-  otherBullionRef?: React.RefObject<THREE.Group>;
+  otherBullionRef?: React.RefObject<THREE.Group | null>;
   onClick?: () => void;
   onPointerOver?: () => void;
   onPointerOut?: () => void;

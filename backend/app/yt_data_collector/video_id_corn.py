@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from youtube_transcript_api import (
@@ -280,9 +280,12 @@ async def _store_transcript(*, video_record: dict[str, Any], transcript_raw: dic
     publish_date = _parse_date(video_record.get("video_publish_date"))
     fetched_at = datetime.now(timezone.utc)
 
-    # asyncpg JSONB expects a JSON string parameter.
-    transcript_raw_json = json.dumps(transcript_raw, ensure_ascii=False)
-    source_json = json.dumps(video_record, ensure_ascii=False)
+    # asyncpg JSONB expects a JSON string parameter. ``default=str`` lets
+    # us pass through non-JSON-native types coming straight from asyncpg
+    # rows (notably ``datetime.date`` for ``video_publish_date``) without
+    # a custom encoder per call site.
+    transcript_raw_json = json.dumps(transcript_raw, ensure_ascii=False, default=str)
+    source_json = json.dumps(video_record, ensure_ascii=False, default=str)
 
     async with get_db() as conn:
         await conn.execute(
@@ -312,6 +315,120 @@ async def _store_transcript(*, video_record: dict[str, Any], transcript_raw: dic
 async def sync_latest_video_ids_and_transcripts(*, channel_urls: tuple[str, ...]) -> None:
     """Hourly sync (last month): insert new IDs; transcribe + store missing transcripts."""
     await sync_video_ids_and_transcripts(channel_urls=channel_urls, max_age_days=30)
+
+
+# ---------------------------------------------------------------------------
+# Split-stage helpers — used by the new ``backfill_scrape`` and
+# ``backfill_transcript`` worker jobs. The combined sync above stays for the
+# hourly cron path.
+# ---------------------------------------------------------------------------
+
+
+async def scrape_video_ids_only(
+    *,
+    channel_urls: tuple[str, ...],
+    max_age_days: int,
+) -> dict[str, int]:
+    """Stage 1: scrape recent video IDs into ``video_ids`` only.
+
+    Does NOT fetch transcripts — that's stage 2 (``transcribe_missing``).
+    Splitting lets the caller decide when to spend the much-more-expensive
+    transcript fetch budget separately from the cheap ID scrape.
+
+    Returns counts: ``processed_ids``, ``inserted_ids``, ``insert_failed``.
+    """
+    await ensure_schema()
+
+    records = fetch_last_month_video_ids(channel_urls=channel_urls, max_age_days=max_age_days)
+    if not records:
+        logger.info("yt scrape: no records returned")
+        return {"processed_ids": 0, "inserted_ids": 0, "insert_failed": 0}
+
+    inserted = 0
+    insert_failed = 0
+    for record in records:
+        try:
+            did_insert = await _insert_video_id_if_missing(record)
+        except Exception as exc:
+            insert_failed += 1
+            logger.warning("yt scrape insert failed | video_id=%s | reason=%s", record.get("video_id"), exc)
+            continue
+        if did_insert:
+            inserted += 1
+
+    logger.info("yt scrape: ids processed=%d | inserted=%d | failed=%d", len(records), inserted, insert_failed)
+    return {
+        "processed_ids": len(records),
+        "inserted_ids": inserted,
+        "insert_failed": insert_failed,
+    }
+
+
+async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
+    """Stage 2: transcribe rows in ``video_ids`` from the last N days that
+    don't yet have a row in ``video_transcripts``.
+
+    Reads candidates straight from Postgres (no YouTube re-scrape) and
+    stores transcripts via the existing ``_store_transcript`` path.
+
+    Returns counts: ``candidates``, ``transcripts_stored``, ``transcripts_failed``,
+    ``transcripts_unavailable``.
+    """
+    await ensure_schema()
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).date()
+
+    async with get_db() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT v.video_id, v.channel_url, v.video_title, v.video_publish_date
+            FROM video_ids v
+            LEFT JOIN video_transcripts t USING (video_id)
+            WHERE t.video_id IS NULL
+              AND (v.video_publish_date IS NULL OR v.video_publish_date >= $1)
+            ORDER BY v.video_publish_date DESC NULLS LAST
+            """,
+            cutoff,
+        )
+
+    if not rows:
+        logger.info("yt transcribe-missing: nothing to do (cutoff=%s)", cutoff)
+        return {
+            "candidates": 0,
+            "transcripts_stored": 0,
+            "transcripts_failed": 0,
+            "transcripts_unavailable": 0,
+        }
+
+    stored = 0
+    failed = 0
+    unavailable = 0
+    for row in rows:
+        video_id = row["video_id"]
+        record = {
+            "video_id": video_id,
+            "channel_url": row["channel_url"],
+            "video_title": row["video_title"],
+            "video_publish_date": row["video_publish_date"],
+        }
+        try:
+            transcript_raw = await asyncio.to_thread(fetch_transcript_raw, video_id)
+            await _store_transcript(video_record=record, transcript_raw=transcript_raw)
+            logger.info("yt transcript stored | video_id=%s", video_id)
+            stored += 1
+        except (NoTranscriptFound, TranscriptsDisabled, CouldNotRetrieveTranscript) as exc:
+            unavailable += 1
+            logger.info("yt transcript unavailable | video_id=%s | reason=%s", video_id, exc)
+        except Exception as exc:
+            failed += 1
+            logger.warning("yt transcript failed | video_id=%s | reason=%s", video_id, exc)
+
+    return {
+        "candidates": len(rows),
+        "transcripts_stored": stored,
+        "transcripts_failed": failed,
+        "transcripts_unavailable": unavailable,
+    }
 
 
 async def sync_video_ids_and_transcripts(*, channel_urls: tuple[str, ...], max_age_days: int) -> dict[str, int]:

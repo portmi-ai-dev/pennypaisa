@@ -1,10 +1,17 @@
-"""YouTube backfill / sync admin routes — all routed through arq worker.
+"""YouTube bulk-job routes — split into two stages, both worker-backed.
 
-Both `/api/yt/backfill` and `/api/yt/sync-now` enqueue jobs onto the
-worker process and return a `job_id` immediately. Use
-`/api/yt/job/{job_id}` to poll status. The in-memory job dict has been
-removed — arq's Redis-backed result store is durable across API
-restarts.
+Stage 1 — `POST /api/yt/backfill_scrape`
+    Enqueue a job that scrapes recent video IDs only (no transcripts)
+    from the channels listed in ``YT_CHANNEL_URLS``. Default window 10
+    days; pass ``?days=N`` to override.
+
+Stage 2 — `POST /api/yt/backfill_transcript`
+    Enqueue a job that transcribes rows already in ``video_ids`` from
+    the last N days that don't yet have a row in ``video_transcripts``.
+    Default window 10 days; pass ``?days=N`` to override.
+
+Each stage has its own poll endpoint so callers can track them
+independently. Both polls share the same response shape.
 """
 
 from __future__ import annotations
@@ -25,7 +32,7 @@ router = APIRouter(prefix="/api", tags=["yt"])
 class EnqueueResponse(BaseModel):
     job_id: str
     status: Literal["queued"]
-    max_age_days: int
+    days: int
 
 
 class JobStatusResponse(BaseModel):
@@ -40,39 +47,8 @@ def _require_db() -> None:
         raise HTTPException(status_code=400, detail="NEON_DATABASE_URL is not configured.")
 
 
-@router.post("/yt/backfill", response_model=EnqueueResponse, summary="Enqueue a backfill job")
-async def yt_backfill(
-    arq: ArqRedis = Depends(get_arq),
-    max_age_days: int = Query(90, ge=1, le=365, description="How far back to scrape (days)."),
-) -> EnqueueResponse:
-    _require_db()
-    job = await arq.enqueue_job("yt_backfill_job", max_age_days)
-    if job is None:
-        raise HTTPException(status_code=503, detail="Failed to enqueue backfill job")
-    return EnqueueResponse(job_id=job.job_id, status="queued", max_age_days=max_age_days)
-
-
-@router.post("/yt/sync-now", response_model=EnqueueResponse, summary="Enqueue an immediate yt sync")
-async def yt_sync_now(
-    arq: ArqRedis = Depends(get_arq),
-    max_age_days: int = Query(30, ge=1, le=365, description="How far back to scrape (days)."),
-) -> EnqueueResponse:
-    _require_db()
-    job = await arq.enqueue_job("yt_sync_now_job", max_age_days)
-    if job is None:
-        raise HTTPException(status_code=503, detail="Failed to enqueue sync job")
-    return EnqueueResponse(job_id=job.job_id, status="queued", max_age_days=max_age_days)
-
-
-@router.get(
-    "/yt/job/{job_id}",
-    response_model=JobStatusResponse,
-    summary="Check status / fetch result of any yt worker job",
-)
-async def yt_job_status(
-    job_id: str,
-    arq: ArqRedis = Depends(get_arq),
-) -> JobStatusResponse:
+async def _read_job_status(job_id: str, arq: ArqRedis) -> JobStatusResponse:
+    """Shared job-poll logic used by both backfill stages."""
     job = Job(job_id, arq)
     status: JobStatus = await job.status()
 
@@ -96,3 +72,79 @@ async def yt_job_status(
         )
 
     return JobStatusResponse(job_id=job_id, status="completed", result=result_value)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 1: scrape video IDs only
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/yt/backfill_scrape",
+    response_model=EnqueueResponse,
+    summary="Enqueue a scrape job (video IDs only, no transcripts)",
+)
+async def yt_backfill_scrape(
+    arq: ArqRedis = Depends(get_arq),
+    days: int = Query(
+        10,
+        ge=1,
+        le=365,
+        description="How many days back to scrape (defaults to 10).",
+    ),
+) -> EnqueueResponse:
+    _require_db()
+    job = await arq.enqueue_job("backfill_scrape_job", days)
+    if job is None:
+        raise HTTPException(status_code=503, detail="Failed to enqueue backfill_scrape job")
+    return EnqueueResponse(job_id=job.job_id, status="queued", days=days)
+
+
+@router.get(
+    "/yt/job/backfill_scrape/{job_id}",
+    response_model=JobStatusResponse,
+    summary="Check status / fetch result of a backfill_scrape job",
+)
+async def yt_backfill_scrape_status(
+    job_id: str,
+    arq: ArqRedis = Depends(get_arq),
+) -> JobStatusResponse:
+    return await _read_job_status(job_id, arq)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 2: transcribe missing rows already in the DB
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/yt/backfill_transcript",
+    response_model=EnqueueResponse,
+    summary="Enqueue a transcript backfill job (transcribes DB rows missing transcripts)",
+)
+async def yt_backfill_transcript(
+    arq: ArqRedis = Depends(get_arq),
+    days: int = Query(
+        10,
+        ge=1,
+        le=365,
+        description="How many days back to look for missing transcripts (defaults to 10).",
+    ),
+) -> EnqueueResponse:
+    _require_db()
+    job = await arq.enqueue_job("backfill_transcript_job", days)
+    if job is None:
+        raise HTTPException(status_code=503, detail="Failed to enqueue backfill_transcript job")
+    return EnqueueResponse(job_id=job.job_id, status="queued", days=days)
+
+
+@router.get(
+    "/yt/backfill_transcript/{job_id}",
+    response_model=JobStatusResponse,
+    summary="Check status / fetch result of a backfill_transcript job",
+)
+async def yt_backfill_transcript_status(
+    job_id: str,
+    arq: ArqRedis = Depends(get_arq),
+) -> JobStatusResponse:
+    return await _read_job_status(job_id, arq)

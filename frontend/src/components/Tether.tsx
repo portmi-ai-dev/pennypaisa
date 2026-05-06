@@ -3,8 +3,8 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
 interface TetherProps {
-  startRef: React.RefObject<THREE.Group>;
-  endRef: React.RefObject<THREE.Group>;
+  startRef: React.RefObject<THREE.Group | null>;
+  endRef: React.RefObject<THREE.Group | null>;
   visible: boolean;
   onClick?: () => void;
 }

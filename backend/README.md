@@ -123,10 +123,14 @@ Real-time aggregated financial data with multi-provider fallback:
 
 ### YouTube Endpoints (worker-backed)
 
-All YouTube scraping is offloaded to the arq worker process. Routes return
-a `job_id` immediately and the client polls for the result.
+All YouTube scraping is offloaded to the arq worker process. Every
+route follows an **enqueue + poll** contract: the API returns a
+`job_id` immediately, the worker does the heavy lifting, and the
+client polls for status + result.
 
-- **`POST /api/yt/transcript`** – Enqueue transcript fetch for a YouTube URL
+#### 1. Single-URL transcript
+
+- **`POST /api/yt/transcript`** – Enqueue transcript fetch for one YouTube URL
   ```bash
   curl -X POST http://localhost:8000/api/yt/transcript \
     -H "Content-Type: application/json" \
@@ -136,20 +140,63 @@ a `job_id` immediately and the client polls for the result.
   - Response: `{ "job_id": "...", "status": "queued" }`
 
 - **`GET /api/yt/transcript/{job_id}`** – Poll status / fetch result
-  - Response shape:
+  - Result shape on completion:
     ```json
-    { "job_id": "...",
-      "status": "queued|in_progress|completed|failed|not_found",
-      "result": { "videoId": "...", "source": "youtube|assemblyai", "text": "..." } | null,
-      "error": "..." | null }
+    { "videoId": "...", "source": "youtube|assemblyai", "text": "..." }
     ```
 
-- **`POST /api/yt/backfill`** – Enqueue bulk backfill (defaults to 90 days)
-- **`POST /api/yt/sync-now`** – Enqueue immediate channel sync (defaults to 30 days)
-- **`GET /api/yt/job/{job_id}`** – Poll any backfill / sync job (same shape as above)
+#### 2. Backfill scrape (video IDs only)
+
+- **`POST /api/yt/backfill_scrape?days=N`** – Enqueue a job that scrapes
+  recent video IDs from the channels in `YT_CHANNEL_URLS` and inserts
+  them into `video_ids`. **No transcripts** — that's stage 2.
+  - Default window: `days=10`.
+  - Response: `{ "job_id": "...", "status": "queued", "days": N }`
+
+- **`GET /api/yt/job/backfill_scrape/{job_id}`** – Poll a `backfill_scrape` job
+  - Result shape on completion:
+    ```json
+    { "processed_ids": N, "inserted_ids": N, "insert_failed": N }
+    ```
+
+#### 3. Backfill transcripts (from already-scraped IDs)
+
+- **`POST /api/yt/backfill_transcript?days=N`** – Enqueue a job that reads
+  `video_ids` rows from the last N days that don't have a
+  `video_transcripts` row, and fetches + stores the missing transcripts.
+  - Default window: `days=10`.
+  - Response: `{ "job_id": "...", "status": "queued", "days": N }`
+
+- **`GET /api/yt/backfill_transcript/{job_id}`** – Poll a `backfill_transcript` job
+  - Result shape on completion:
+    ```json
+    { "candidates": N, "transcripts_stored": N,
+      "transcripts_failed": N, "transcripts_unavailable": N }
+    ```
+
+#### Shared status shape
+
+Every poll endpoint returns:
+```json
+{ "job_id": "...",
+  "status": "queued|in_progress|completed|failed|not_found",
+  "result": { ... } | null,
+  "error": "..." | null }
+```
+
+#### Why split the backfill?
+
+Scraping IDs is cheap (`scrapetube` listings). Fetching transcripts is
+expensive (yt-dlp + AssemblyAI fallback per video). Splitting lets you
+schedule the two independently — e.g., scrape nightly, transcribe in
+smaller daily batches to control AssemblyAI spend.
+
+#### Hourly cron
 
 The hourly channel sync that previously ran inside FastAPI's lifespan
-now runs as an arq cron at minute `:05` of every hour inside the worker.
+now runs as an arq cron at minute `:05` of every hour inside the
+worker. It runs the combined scrape-and-transcribe path so steady-state
+ingestion doesn't need manual triggers.
 
 ---
 

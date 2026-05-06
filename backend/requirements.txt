@@ -4,6 +4,7 @@ pydantic-settings
 redis
 hiredis
 arq
+watchfiles
 asyncpg
 google-genai
 httpx

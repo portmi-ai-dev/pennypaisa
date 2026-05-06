@@ -88,22 +88,34 @@ All YouTube routes follow an **enqueue + poll** contract — the API
 returns a `job_id` immediately, the arq worker does the heavy lifting,
 and the client polls for the result.
 
-| Method | Path                              | Action                                                  |
-|--------|-----------------------------------|---------------------------------------------------------|
-| POST   | `/api/yt/transcript`              | Enqueue transcript fetch for a video URL → `{job_id}`   |
-| GET    | `/api/yt/transcript/{job_id}`     | Poll status / retrieve transcript                       |
-| POST   | `/api/yt/backfill`                | Enqueue bulk backfill (default 90 days)                 |
-| POST   | `/api/yt/sync-now`                | Enqueue immediate channel sync (default 30 days)        |
-| GET    | `/api/yt/job/{job_id}`            | Poll any backfill / sync job                            |
+| Method | Path                                            | Action                                                              |
+|--------|-------------------------------------------------|---------------------------------------------------------------------|
+| POST   | `/api/yt/transcript`                            | Enqueue transcript fetch for a single video URL → `{job_id}`        |
+| GET    | `/api/yt/transcript/{job_id}`                   | Poll status / retrieve single-URL transcript                        |
+| POST   | `/api/yt/backfill_scrape?days=N`                | Enqueue scrape of recent video IDs only (no transcripts). Default 10 days. |
+| GET    | `/api/yt/job/backfill_scrape/{job_id}`          | Poll a `backfill_scrape` job                                         |
+| POST   | `/api/yt/backfill_transcript?days=N`            | Enqueue transcripts for DB rows missing one. Default 10 days.       |
+| GET    | `/api/yt/backfill_transcript/{job_id}`          | Poll a `backfill_transcript` job                                    |
 
-Status response shape:
+Status response shape (shared by every poll endpoint):
 ```json
-{ "job_id": "...", "status": "queued|in_progress|completed|failed|not_found",
-  "result": { ... } | null, "error": "..." | null }
+{ "job_id": "...",
+  "status": "queued|in_progress|completed|failed|not_found",
+  "result": { ... } | null,
+  "error": "..." | null }
 ```
 
+**Two-stage backfill** lets callers spend the cheap "scrape IDs"
+budget separately from the expensive "fetch transcripts" budget:
+
+1. `POST /api/yt/backfill_scrape` → only inserts into `video_ids`.
+2. `POST /api/yt/backfill_transcript` → reads candidates straight from
+   Postgres (no YouTube re-scrape) and fills `video_transcripts`.
+
 The hourly channel-sync that used to run inside FastAPI now runs as an
-arq cron at minute `:05` of every hour inside the worker process.
+arq cron at minute `:05` of every hour inside the worker process — it
+runs the combined sync (scrape + transcribe) so steady-state ingestion
+needs no manual triggers.
 
 ---
 

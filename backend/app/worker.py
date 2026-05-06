@@ -8,14 +8,17 @@ Why a separate worker:
     while the worker box absorbs the heavy CPU/IO bursts.
 
 Job inventory (this slice — YouTube only):
-    * ``transcript_job``       — single video URL → transcript (on-demand).
-    * ``yt_backfill_job``      — bulk backfill (one-time admin trigger).
-    * ``yt_sync_now_job``      — manual trigger of the hourly sync logic.
+    * ``transcript_job``           — single video URL → transcript (on-demand).
+    * ``backfill_scrape_job``      — bulk: scrape recent video IDs only,
+      no transcripts. Default window 10 days.
+    * ``backfill_transcript_job``  — bulk: transcribe rows already in
+      ``video_ids`` that are missing a transcript. Default window 10 days.
 
 Cron:
     * ``yt_hourly_cron``       — replaces the in-process loop that used
       to live in ``app.core.lifespan``. Fires once per hour to scrape
-      new video IDs + transcribe.
+      new video IDs + transcribe (combined sync — separate from the
+      manual split-stage jobs above).
 
 Other workloads (Gemini intel refresher) intentionally stay in-process
 inside FastAPI's lifespan for now — only YouTube was moved.
@@ -38,8 +41,9 @@ from app.core.database import close_db, connect_db
 from app.yt_data_collector.video_id_corn import (
     ensure_schema as ensure_yt_schema,
     resolve_channel_urls_from_env,
+    scrape_video_ids_only,
     sync_latest_video_ids_and_transcripts,
-    sync_video_ids_and_transcripts,
+    transcribe_missing,
 )
 from app.yt_data_collector.yt_transcriber import (
     TranscriptResult,
@@ -70,20 +74,28 @@ async def transcript_job(ctx: dict[str, Any], video_url: str) -> dict[str, Any]:
     }
 
 
-async def yt_backfill_job(ctx: dict[str, Any], max_age_days: int) -> dict[str, int]:
-    """Backfill video IDs + transcripts going back ``max_age_days``."""
-    return await sync_video_ids_and_transcripts(
+async def backfill_scrape_job(ctx: dict[str, Any], days: int = 10) -> dict[str, int]:
+    """Scrape recent video IDs only (no transcripts) from configured channels.
+
+    Stage 1 of the split-backfill flow. Cheap call relative to transcript
+    fetching — separates "what's new on the channels" from "fetch the
+    expensive transcripts" so the latter can be scheduled independently.
+    """
+    return await scrape_video_ids_only(
         channel_urls=resolve_channel_urls_from_env(),
-        max_age_days=max_age_days,
+        max_age_days=days,
     )
 
 
-async def yt_sync_now_job(ctx: dict[str, Any], max_age_days: int = 30) -> dict[str, int]:
-    """One-shot run of the hourly sync (manual trigger)."""
-    return await sync_video_ids_and_transcripts(
-        channel_urls=resolve_channel_urls_from_env(),
-        max_age_days=max_age_days,
-    )
+async def backfill_transcript_job(ctx: dict[str, Any], days: int = 10) -> dict[str, int]:
+    """Transcribe rows in ``video_ids`` from the last ``days`` days that
+    don't yet have a row in ``video_transcripts``.
+
+    Stage 2 of the split-backfill flow. Reads candidates from Postgres
+    (no YouTube re-scrape), so callers control the transcript-budget
+    spend independently of the cheap scrape stage.
+    """
+    return await transcribe_missing(max_age_days=days)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -192,7 +204,7 @@ class WorkerSettings:
     """arq worker configuration. Run with ``arq app.worker.WorkerSettings``."""
 
     redis_settings = _build_redis_settings()
-    functions = [transcript_job, yt_backfill_job, yt_sync_now_job]
+    functions = [transcript_job, backfill_scrape_job, backfill_transcript_job]
     cron_jobs = [
         # Minute 5 of every hour — small offset away from :00 to avoid
         # piling onto whatever other systems run at the top of the hour.
