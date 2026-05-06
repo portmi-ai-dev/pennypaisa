@@ -51,29 +51,12 @@ export const BlockchainTether: React.FC<BlockchainTetherProps> = ({ start, end, 
 
   return (
     <group ref={groupRef}>
-      {/* Sleek Cyan Data Stream */}
-      <mesh position={new THREE.Vector3().addVectors(startVec, endVec).multiplyScalar(0.5)}>
-        <boxGeometry args={[distance, 0.02, 0.02]} />
-        <meshStandardMaterial 
-          color="#00ffff" 
-          emissive="#00ffff"
-          emissiveIntensity={15}
-          transparent 
-          opacity={0.9} 
-        />
-      </mesh>
-
-      {/* Magenta Energy Aura (Vibrant) */}
-      <mesh position={new THREE.Vector3().addVectors(startVec, endVec).multiplyScalar(0.5)}>
-        <boxGeometry args={[distance, 0.06, 0.06]} />
-        <meshStandardMaterial 
-          color="#ff00ff" 
-          emissive="#ff00ff"
-          emissiveIntensity={5}
-          transparent 
-          opacity={0.2} 
-        />
-      </mesh>
+      {/* Removed: cyan data-stream beam + magenta aura. Both used a flat
+          boxGeometry of length `distance` along the X axis with no rotation,
+          so for vertical start→end they rendered as a horizontal stick
+          floating between the two cuboids. The geometric link nodes +
+          moving data packets below already carry the "data flowing" idea
+          without the misoriented beam. */}
 
       {/* Geometric Data Nodes */}
       {links.map((link, i) => {

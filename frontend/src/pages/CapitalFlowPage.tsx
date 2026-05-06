@@ -299,7 +299,10 @@ export const CapitalFlowPage: React.FC<Props> = ({ prices }) => {
   });
   const frameRef = React.useRef<number | null>(null);
 
-  const [range, setRange] = React.useState<Range>('24h');
+  // Default to 30D — capital-flow signals are noisy at 24h and most users
+  // want the medium-term rotation picture first. Order in the time-range
+  // toggle below is also 30D · 7D · 24H to match.
+  const [range, setRange] = React.useState<Range>('30d');
   const [data, setData] = React.useState<FlowData | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [expanded, setExpanded] = React.useState<SectorId | null>(null);
@@ -1138,9 +1141,10 @@ export const CapitalFlowPage: React.FC<Props> = ({ prices }) => {
           </div>
         </div>
 
-        {/* Time range */}
+        {/* Time range — ordered 30D · 7D · 24H so the default (30D) sits
+            on the left where the eye lands first. */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
-          {(['24h', '7d', '30d'] as Range[]).map((r) => (
+          {(['30d', '7d', '24h'] as Range[]).map((r) => (
             <button
               key={r}
               onClick={() => setRange(r)}

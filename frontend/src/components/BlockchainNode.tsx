@@ -27,10 +27,15 @@ export const BlockchainNode: React.FC<BlockchainNodeProps> = ({
 }) => {
   const groupRef = useRef<THREE.Group>(null);
 
+  // Float oscillation must ADD to the base y from `position` prop, not
+  // OVERWRITE it. Previously this set position.y = sin(...) * 0.2, which
+  // discarded whatever y was passed in — the node ended up at local y≈0
+  // and overlapped its parent BitcoinCuboid completely. Now we anchor at
+  // position[1] and oscillate ±0.2 around it.
   useFrame((state) => {
     if (!groupRef.current || !visible) return;
     const t = state.clock.elapsedTime;
-    groupRef.current.position.y = Math.sin(t * 0.5 + 1) * 0.2;
+    groupRef.current.position.y = position[1] + Math.sin(t * 0.5 + 1) * 0.2;
   });
 
   if (!visible) return null;
@@ -60,18 +65,11 @@ export const BlockchainNode: React.FC<BlockchainNodeProps> = ({
           opacity={0.98}
         />
 
-        {/* Internal Circuitry Core (Cyan) */}
-        <mesh scale={0.98}>
-          <boxGeometry args={[2.2, 2.2, 2.2]} />
-          <meshBasicMaterial color="#00ffff" wireframe transparent opacity={0.3} />
-        </mesh>
-        
-        {/* Secondary Circuitry Core (Magenta) */}
-        <mesh scale={0.96} rotation={[0.5, 0.5, 0.5]}>
-          <boxGeometry args={[2.2, 2.2, 2.2]} />
-          <meshBasicMaterial color="#ff00ff" wireframe transparent opacity={0.15} />
-        </mesh>
-        
+        {/* Removed: cyan + magenta wireframe overlays. They read as visual
+            noise on the cuboid (especially the rotated magenta one, which
+            shows as a tilted purple frame around the cube). The inner
+            CPU core glow below carries the "tech" feel without clutter. */}
+
         {/* Solid Inner CPU Core */}
         <mesh scale={0.3}>
           <boxGeometry args={[2.2, 2.2, 2.2]} />
