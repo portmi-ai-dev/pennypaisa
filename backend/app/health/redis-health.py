@@ -2,12 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from redis.asyncio import Redis
 
 from app.core.redis_client import get_redis
+from app.models.health import HealthResponse
 
 router = APIRouter(prefix="/health", tags=["health"])
 
 
-@router.get("/redis")
-async def redis_health(redis: Redis = Depends(get_redis)) -> dict[str, str]:
+@router.get("/redis", response_model=HealthResponse)
+async def redis_health(redis: Redis = Depends(get_redis)) -> HealthResponse:
     try:
         await redis.ping()
     except Exception as exc:  # pragma: no cover - runtime diagnostics
@@ -21,10 +22,10 @@ async def redis_health(redis: Redis = Depends(get_redis)) -> dict[str, str]:
         raise HTTPException(
             status_code=503,
             detail={
-                "status": "down",
+                "status": "error",
                 "service": "redis",
                 "error": message,
                 "hint": hint,
             },
         ) from exc
-    return {"status": "ok", "service": "redis"}
+    return HealthResponse(status="ok", service="redis")

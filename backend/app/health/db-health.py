@@ -2,18 +2,19 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.config import settings
 from app.core.database import connect_db
+from app.models.health import HealthResponse
 
 router = APIRouter(prefix="/health", tags=["health"])
 
 
-@router.get("/db")
-async def db_health() -> dict[str, str]:
+@router.get("/db", response_model=HealthResponse)
+async def db_health() -> HealthResponse:
     if not settings.NEON_DATABASE_URL:
-        return {
-            "status": "disabled",
-            "service": "neon-db",
-            "message": "NEON_DATABASE_URL is not configured",
-        }
+        return HealthResponse(
+            status="disabled",
+            service="neon-db",
+            detail="NEON_DATABASE_URL is not configured",
+        )
 
     try:
         pool = await connect_db()
@@ -23,10 +24,10 @@ async def db_health() -> dict[str, str]:
         raise HTTPException(
             status_code=503,
             detail={
-                "status": "down",
+                "status": "error",
                 "service": "neon-db",
                 "error": str(exc),
             },
         ) from exc
 
-    return {"status": "ok", "service": "neon-db"}
+    return HealthResponse(status="ok", service="neon-db")

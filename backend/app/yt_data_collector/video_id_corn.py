@@ -117,10 +117,19 @@ CREATE TABLE IF NOT EXISTS video_transcripts (
     video_title              TEXT,
     video_publish_date       DATE,
     transcript_fetch_date_utc TIMESTAMPTZ NOT NULL,
-    transcript_raw           JSONB NOT NULL,
+    transcript_raw           JSONB,
     source_video_metadata    JSONB NOT NULL,
+    assembly_ai_transcript   TEXT,
+    transcript_source        TEXT,
     inserted_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Migration: pre-existing rows have transcript_raw NOT NULL and no AssemblyAI
+-- columns. Drop the constraint + add the new columns idempotently.
+ALTER TABLE video_transcripts
+    ALTER COLUMN transcript_raw DROP NOT NULL,
+    ADD COLUMN IF NOT EXISTS assembly_ai_transcript TEXT,
+    ADD COLUMN IF NOT EXISTS transcript_source      TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_video_transcripts_fetch_date
     ON video_transcripts (transcript_fetch_date_utc DESC);
@@ -273,19 +282,50 @@ async def _transcript_exists(video_id: str) -> bool:
         return bool(row)
 
 
-async def _store_transcript(*, video_record: dict[str, Any], transcript_raw: dict[str, Any]) -> None:
+async def _store_transcript(
+    *,
+    video_record: dict[str, Any],
+    transcript_raw: dict[str, Any] | None = None,
+    assembly_ai_transcript: str | None = None,
+) -> None:
+    """UPSERT a transcript row from either YouTube API and/or AssemblyAI.
+
+    Either ``transcript_raw`` (YouTube API JSON) or ``assembly_ai_transcript``
+    (AssemblyAI plain-text) — or both — must be supplied. ``transcript_source``
+    is derived from which fields are present so callers can later filter
+    ``WHERE transcript_source = 'assemblyai'`` etc.
+
+    UPSERT semantics: if a row exists with only YouTube data and we now
+    add AssemblyAI (or vice-versa), the existing field is preserved and
+    the missing one is filled in; ``transcript_source`` is recomputed.
+    """
+    if transcript_raw is None and not assembly_ai_transcript:
+        raise ValueError(
+            "_store_transcript needs at least one of transcript_raw / assembly_ai_transcript"
+        )
+
     video_id = str(video_record["video_id"])
     channel_url = video_record.get("channel_url")
     title = video_record.get("video_title")
     publish_date = _parse_date(video_record.get("video_publish_date"))
     fetched_at = datetime.now(timezone.utc)
 
-    # asyncpg JSONB expects a JSON string parameter. ``default=str`` lets
-    # us pass through non-JSON-native types coming straight from asyncpg
-    # rows (notably ``datetime.date`` for ``video_publish_date``) without
-    # a custom encoder per call site.
-    transcript_raw_json = json.dumps(transcript_raw, ensure_ascii=False, default=str)
+    # ``default=str`` lets us pass through non-JSON-native types (notably
+    # ``datetime.date`` for ``video_publish_date``) without a custom
+    # encoder per call site.
+    transcript_raw_json = (
+        json.dumps(transcript_raw, ensure_ascii=False, default=str)
+        if transcript_raw is not None
+        else None
+    )
     source_json = json.dumps(video_record, ensure_ascii=False, default=str)
+
+    if transcript_raw is not None and assembly_ai_transcript:
+        source_label = "both"
+    elif transcript_raw is not None:
+        source_label = "youtube"
+    else:
+        source_label = "assemblyai"
 
     async with get_db() as conn:
         await conn.execute(
@@ -297,10 +337,23 @@ async def _store_transcript(*, video_record: dict[str, Any], transcript_raw: dic
                 video_publish_date,
                 transcript_fetch_date_utc,
                 transcript_raw,
-                source_video_metadata
+                source_video_metadata,
+                assembly_ai_transcript,
+                transcript_source
             )
-            VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)
-            ON CONFLICT (video_id) DO NOTHING;
+            VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)
+            ON CONFLICT (video_id) DO UPDATE SET
+                transcript_raw = COALESCE(video_transcripts.transcript_raw, EXCLUDED.transcript_raw),
+                assembly_ai_transcript = COALESCE(video_transcripts.assembly_ai_transcript, EXCLUDED.assembly_ai_transcript),
+                transcript_source = CASE
+                    WHEN COALESCE(video_transcripts.transcript_raw, EXCLUDED.transcript_raw) IS NOT NULL
+                     AND COALESCE(video_transcripts.assembly_ai_transcript, EXCLUDED.assembly_ai_transcript) IS NOT NULL
+                        THEN 'both'
+                    WHEN COALESCE(video_transcripts.transcript_raw, EXCLUDED.transcript_raw) IS NOT NULL
+                        THEN 'youtube'
+                    ELSE 'assemblyai'
+                END,
+                transcript_fetch_date_utc = EXCLUDED.transcript_fetch_date_utc;
             """,
             video_id,
             channel_url,
@@ -309,6 +362,8 @@ async def _store_transcript(*, video_record: dict[str, Any], transcript_raw: dic
             fetched_at,
             transcript_raw_json,
             source_json,
+            assembly_ai_transcript,
+            source_label,
         )
 
 
@@ -368,12 +423,29 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
     """Stage 2: transcribe rows in ``video_ids`` from the last N days that
     don't yet have a row in ``video_transcripts``.
 
-    Reads candidates straight from Postgres (no YouTube re-scrape) and
-    stores transcripts via the existing ``_store_transcript`` path.
+    For each candidate:
+        1. Try the YouTube transcript API (cheap). On success, store the
+           raw JSON in ``transcript_raw`` and stop.
+        2. On YouTube-API exception, fall back to AssemblyAI (yt-dlp +
+           ffmpeg + AssemblyAI long-poll, expensive). On success, store
+           the plain text in ``assembly_ai_transcript``.
+        3. If both fail, count as ``transcripts_unavailable``.
 
-    Returns counts: ``candidates``, ``transcripts_stored``, ``transcripts_failed``,
-    ``transcripts_unavailable``.
+    AssemblyAI fallback is only attempted when ``ASSEMBLYAI_API_KEY`` is
+    configured — without it, behaviour matches the previous YouTube-only
+    flow.
+
+    Returns counts:
+        ``candidates``, ``youtube_stored``, ``assemblyai_stored``,
+        ``transcripts_unavailable``, ``transcripts_failed``.
     """
+    # Local imports to avoid a circular import at module-load time
+    # (``yt_transcriber`` itself imports from ``app.core.config``).
+    from app.core.config import settings as _settings
+    from app.yt_data_collector.yt_transcriber import (
+        _transcribe_video_audio_with_assemblyai,
+    )
+
     await ensure_schema()
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).date()
@@ -395,14 +467,20 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
         logger.info("yt transcribe-missing: nothing to do (cutoff=%s)", cutoff)
         return {
             "candidates": 0,
-            "transcripts_stored": 0,
-            "transcripts_failed": 0,
+            "youtube_stored": 0,
+            "assemblyai_stored": 0,
             "transcripts_unavailable": 0,
+            "transcripts_failed": 0,
         }
 
-    stored = 0
+    assemblyai_key = (getattr(_settings, "assemblyai_api_key", "") or "").strip()
+    assemblyai_enabled = bool(assemblyai_key)
+
+    youtube_stored = 0
+    assemblyai_stored = 0
     failed = 0
     unavailable = 0
+
     for row in rows:
         video_id = row["video_id"]
         record = {
@@ -411,80 +489,95 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
             "video_title": row["video_title"],
             "video_publish_date": row["video_publish_date"],
         }
+
+        # ── 1. YouTube transcript API ────────────────────────────────
         try:
             transcript_raw = await asyncio.to_thread(fetch_transcript_raw, video_id)
             await _store_transcript(video_record=record, transcript_raw=transcript_raw)
-            logger.info("yt transcript stored | video_id=%s", video_id)
-            stored += 1
+            logger.info("yt transcript stored (youtube) | video_id=%s", video_id)
+            youtube_stored += 1
+            continue
         except (NoTranscriptFound, TranscriptsDisabled, CouldNotRetrieveTranscript) as exc:
-            unavailable += 1
-            logger.info("yt transcript unavailable | video_id=%s | reason=%s", video_id, exc)
+            yt_reason = f"{type(exc).__name__}: {exc}"
         except Exception as exc:
+            # Hard failure on the YouTube path; we still try AssemblyAI
+            # before counting it as a real ``failed``.
+            yt_reason = f"unexpected: {exc}"
+
+        # ── 2. AssemblyAI fallback ───────────────────────────────────
+        if not assemblyai_enabled:
+            unavailable += 1
+            logger.info(
+                "yt transcript unavailable | video_id=%s | yt=%s | assemblyai=disabled",
+                video_id,
+                yt_reason,
+            )
+            continue
+
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        try:
+            assemblyai_text = await asyncio.to_thread(
+                _transcribe_video_audio_with_assemblyai, video_url
+            )
+            assemblyai_text = (assemblyai_text or "").strip()
+            if not assemblyai_text:
+                raise RuntimeError("AssemblyAI returned empty transcript")
+            await _store_transcript(
+                video_record=record, assembly_ai_transcript=assemblyai_text
+            )
+            logger.info(
+                "yt transcript stored (assemblyai) | video_id=%s | yt_reason=%s",
+                video_id,
+                yt_reason,
+            )
+            assemblyai_stored += 1
+        except Exception as aai_exc:
             failed += 1
-            logger.warning("yt transcript failed | video_id=%s | reason=%s", video_id, exc)
+            logger.warning(
+                "yt transcript failed (both paths) | video_id=%s | yt=%s | assemblyai=%s",
+                video_id,
+                yt_reason,
+                aai_exc,
+            )
 
     return {
         "candidates": len(rows),
-        "transcripts_stored": stored,
-        "transcripts_failed": failed,
+        "youtube_stored": youtube_stored,
+        "assemblyai_stored": assemblyai_stored,
         "transcripts_unavailable": unavailable,
+        "transcripts_failed": failed,
     }
 
 
-async def sync_video_ids_and_transcripts(*, channel_urls: tuple[str, ...], max_age_days: int) -> dict[str, int]:
-    """Scrape recent video IDs; insert missing; transcribe + store missing transcripts.
+async def sync_video_ids_and_transcripts(
+    *, channel_urls: tuple[str, ...], max_age_days: int
+) -> dict[str, int]:
+    """Combined sync used by the hourly cron: scrape IDs then transcribe.
 
-    Returns counts: processed_ids, inserted_ids, transcripts_stored.
+    Stage 1 — ``scrape_video_ids_only``: insert any new video IDs.
+    Stage 2 — ``transcribe_missing``: fetch transcripts (YouTube API
+    primary, AssemblyAI fallback) for every row in the window that
+    doesn't already have a transcript.
+
+    Delegates to the split-stage helpers so the AssemblyAI fallback +
+    UPSERT semantics + counters stay in one place.
     """
-    await ensure_schema()
-
-    records = fetch_last_month_video_ids(channel_urls=channel_urls, max_age_days=max_age_days)
-    if not records:
-        logger.info("yt sync: no records scraped")
-        return {"processed_ids": 0, "inserted_ids": 0, "transcripts_stored": 0}
-
-    inserted = 0
-    insert_failed = 0
-    newly_inserted_records: list[dict[str, Any]] = []
-    for record in records:
-        try:
-            did_insert = await _insert_video_id_if_missing(record)
-        except Exception as exc:
-            insert_failed += 1
-            logger.warning("yt sync insert failed | video_id=%s | reason=%s", record.get("video_id"), exc)
-            continue
-        if did_insert:
-            inserted += 1
-            newly_inserted_records.append(record)
-
-    logger.info("yt sync: ids processed=%d | inserted=%d", len(records), inserted)
-
-    # Transcribe: only for new IDs, but also ensure we don't double-run if a transcript exists.
-    transcripts_stored = 0
-    transcripts_failed = 0
-    for record in newly_inserted_records:
-        video_id = str(record.get("video_id") or "")
-        if not video_id:
-            continue
-        try:
-            if await _transcript_exists(video_id):
-                continue
-            transcript_raw = await asyncio.to_thread(fetch_transcript_raw, video_id)
-            await _store_transcript(video_record=record, transcript_raw=transcript_raw)
-            logger.info("yt transcript stored | video_id=%s", video_id)
-            transcripts_stored += 1
-        except (NoTranscriptFound, TranscriptsDisabled, CouldNotRetrieveTranscript) as exc:
-            logger.info("yt transcript unavailable | video_id=%s | reason=%s", video_id, exc)
-        except Exception as exc:
-            transcripts_failed += 1
-            logger.warning("yt transcript failed | video_id=%s | reason=%s", video_id, exc)
+    scrape_counts = await scrape_video_ids_only(
+        channel_urls=channel_urls, max_age_days=max_age_days
+    )
+    transcript_counts = await transcribe_missing(max_age_days=max_age_days)
 
     return {
-        "processed_ids": len(records),
-        "inserted_ids": inserted,
-        "transcripts_stored": transcripts_stored,
-        "insert_failed": insert_failed,
-        "transcripts_failed": transcripts_failed,
+        # ── stage 1 (scrape) ────────────────────────────────────────────
+        "processed_ids": scrape_counts["processed_ids"],
+        "inserted_ids": scrape_counts["inserted_ids"],
+        "insert_failed": scrape_counts["insert_failed"],
+        # ── stage 2 (transcribe) ────────────────────────────────────────
+        "transcript_candidates": transcript_counts["candidates"],
+        "youtube_stored": transcript_counts["youtube_stored"],
+        "assemblyai_stored": transcript_counts["assemblyai_stored"],
+        "transcripts_unavailable": transcript_counts["transcripts_unavailable"],
+        "transcripts_failed": transcript_counts["transcripts_failed"],
     }
 
 

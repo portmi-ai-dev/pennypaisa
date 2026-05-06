@@ -170,9 +170,20 @@ client polls for status + result.
 - **`GET /api/yt/backfill_transcript/{job_id}`** – Poll a `backfill_transcript` job
   - Result shape on completion:
     ```json
-    { "candidates": N, "transcripts_stored": N,
-      "transcripts_failed": N, "transcripts_unavailable": N }
+    { "candidates": N,
+      "youtube_stored": N,
+      "assemblyai_stored": N,
+      "transcripts_unavailable": N,
+      "transcripts_failed": N }
     ```
+  - **Two-source pipeline.** For every candidate the worker first tries
+    the YouTube transcript API (cheap, stored as raw JSON in
+    `video_transcripts.transcript_raw`). On failure it falls back to
+    AssemblyAI (yt-dlp + ffmpeg + AssemblyAI long poll, expensive,
+    stored as plain text in `video_transcripts.assembly_ai_transcript`).
+    The `transcript_source` column records which path(s) succeeded:
+    `'youtube'`, `'assemblyai'`, or `'both'`. Fallback only runs when
+    `ASSEMBLYAI_API_KEY` is configured.
 
 #### Shared status shape
 
@@ -256,11 +267,14 @@ backend/
 │   │   ├── schema.py                    # DDL for intel cache/history tables
 │   │   ├── silver.py                    # Silver sentiment fetcher
 │   │   └── utils.py                     # Gemini response parsing + validation
-│   ├── models/                          # Pydantic response models
+│   ├── models/                          # Pydantic models for every API surface
 │   │   ├── __pycache__/                 # Auto-generated Python bytecode
 │   │   ├── __init__.py                  # Models package marker
+│   │   ├── chat.py                      # Chat request/response models
+│   │   ├── health.py                    # /health/* response models
 │   │   ├── intel.py                     # Sentiment response schemas
-│   │   └── prices.py                    # Prices response schema
+│   │   ├── prices.py                    # Prices response schema
+│   │   └── yt.py                        # YouTube job request/result models
 │   ├── services/                        # Core business logic services
 │   │   ├── __pycache__/                 # Auto-generated Python bytecode
 │   │   ├── __init__.py                  # Services package marker

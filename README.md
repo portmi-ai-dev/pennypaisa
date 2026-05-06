@@ -112,6 +112,18 @@ budget separately from the expensive "fetch transcripts" budget:
 2. `POST /api/yt/backfill_transcript` → reads candidates straight from
    Postgres (no YouTube re-scrape) and fills `video_transcripts`.
 
+**Transcript source fallback.** Stage 2 first tries the YouTube
+transcript API and stores the raw timestamped JSON in
+`video_transcripts.transcript_raw`. When YouTube refuses (captions
+disabled, IP-blocked, etc.) and `ASSEMBLYAI_API_KEY` is set, the
+worker falls back to AssemblyAI (yt-dlp + ffmpeg + AssemblyAI long
+poll) and stores the plain-text transcript in
+`video_transcripts.assembly_ai_transcript`. The
+`transcript_source` column ends up `'youtube'`, `'assemblyai'`, or
+`'both'` depending on which path(s) succeeded — UPSERT semantics
+mean a later YouTube success can fill in the column on a row that
+previously only had AssemblyAI text.
+
 The hourly channel-sync that used to run inside FastAPI now runs as an
 arq cron at minute `:05` of every hour inside the worker process — it
 runs the combined sync (scrape + transcribe) so steady-state ingestion

@@ -2,18 +2,19 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.config import settings
 from app.core.gemini import get_gemini_client
+from app.models.health import HealthResponse
 
 router = APIRouter(prefix="/health", tags=["health"])
 
 
-@router.get("/gemini")
-def gemini_health() -> dict[str, str]:
+@router.get("/gemini", response_model=HealthResponse)
+def gemini_health() -> HealthResponse:
     if not settings.GEMINI_API_KEY:
-        return {
-            "status": "disabled",
-            "service": "gemini",
-            "message": "GEMINI_API_KEY is not configured",
-        }
+        return HealthResponse(
+            status="disabled",
+            service="gemini",
+            detail="GEMINI_API_KEY is not configured",
+        )
 
     try:
         client = get_gemini_client()
@@ -25,10 +26,10 @@ def gemini_health() -> dict[str, str]:
         raise HTTPException(
             status_code=503,
             detail={
-                "status": "down",
+                "status": "error",
                 "service": "gemini",
                 "error": str(exc),
             },
         ) from exc
 
-    return {"status": "ok", "service": "gemini"}
+    return HealthResponse(status="ok", service="gemini")

@@ -8,6 +8,7 @@ Stage 1 — `POST /api/yt/backfill_scrape`
 Stage 2 — `POST /api/yt/backfill_transcript`
     Enqueue a job that transcribes rows already in ``video_ids`` from
     the last N days that don't yet have a row in ``video_transcripts``.
+    Falls back to AssemblyAI when the YouTube transcript API fails.
     Default window 10 days; pass ``?days=N`` to override.
 
 Each stage has its own poll endpoint so callers can track them
@@ -16,30 +17,15 @@ independently. Both polls share the same response shape.
 
 from __future__ import annotations
 
-from typing import Any, Literal
-
 from arq.connections import ArqRedis
 from arq.jobs import Job, JobStatus
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
 
 from app.core.arq_client import get_arq
 from app.core.config import settings
+from app.models.yt import BackfillEnqueueResponse, JobStatusResponse
 
 router = APIRouter(prefix="/api", tags=["yt"])
-
-
-class EnqueueResponse(BaseModel):
-    job_id: str
-    status: Literal["queued"]
-    days: int
-
-
-class JobStatusResponse(BaseModel):
-    job_id: str
-    status: Literal["queued", "in_progress", "completed", "failed", "not_found"]
-    result: dict[str, Any] | None = None
-    error: str | None = None
 
 
 def _require_db() -> None:
@@ -81,7 +67,7 @@ async def _read_job_status(job_id: str, arq: ArqRedis) -> JobStatusResponse:
 
 @router.post(
     "/yt/backfill_scrape",
-    response_model=EnqueueResponse,
+    response_model=BackfillEnqueueResponse,
     summary="Enqueue a scrape job (video IDs only, no transcripts)",
 )
 async def yt_backfill_scrape(
@@ -92,12 +78,12 @@ async def yt_backfill_scrape(
         le=365,
         description="How many days back to scrape (defaults to 10).",
     ),
-) -> EnqueueResponse:
+) -> BackfillEnqueueResponse:
     _require_db()
     job = await arq.enqueue_job("backfill_scrape_job", days)
     if job is None:
         raise HTTPException(status_code=503, detail="Failed to enqueue backfill_scrape job")
-    return EnqueueResponse(job_id=job.job_id, status="queued", days=days)
+    return BackfillEnqueueResponse(job_id=job.job_id, status="queued", days=days)
 
 
 @router.get(
@@ -119,7 +105,7 @@ async def yt_backfill_scrape_status(
 
 @router.post(
     "/yt/backfill_transcript",
-    response_model=EnqueueResponse,
+    response_model=BackfillEnqueueResponse,
     summary="Enqueue a transcript backfill job (transcribes DB rows missing transcripts)",
 )
 async def yt_backfill_transcript(
@@ -130,12 +116,12 @@ async def yt_backfill_transcript(
         le=365,
         description="How many days back to look for missing transcripts (defaults to 10).",
     ),
-) -> EnqueueResponse:
+) -> BackfillEnqueueResponse:
     _require_db()
     job = await arq.enqueue_job("backfill_transcript_job", days)
     if job is None:
         raise HTTPException(status_code=503, detail="Failed to enqueue backfill_transcript job")
-    return EnqueueResponse(job_id=job.job_id, status="queued", days=days)
+    return BackfillEnqueueResponse(job_id=job.job_id, status="queued", days=days)
 
 
 @router.get(
