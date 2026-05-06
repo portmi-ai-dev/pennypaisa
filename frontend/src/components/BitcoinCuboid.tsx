@@ -585,15 +585,18 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
           <pointLight color="#F7931A" intensity={2} distance={5} />
         </group>
 
-        {/* Blockchain Expansion (to the LEFT, away from center) */}
+        {/* Blockchain Expansion — sits VERTICALLY ABOVE the cuboid (was
+            horizontally to the left). +Y is up in our scene. The tether
+            connects the two along the y-axis so the visual relationship
+            reads as one stacked above the other. */}
         {isBlockchainExpanded && (
           <>
-            <BlockchainTether start={[0, 0, 0]} end={[-3.5, 0, 0]} visible={true} />
-            <BlockchainNode 
-              position={[-3.5, 0, 0]} 
-              marketCap={marketCap} 
-              dominance={dominance} 
-              visible={true} 
+            <BlockchainTether start={[0, 0, 0]} end={[0, 3.5, 0]} visible={true} />
+            <BlockchainNode
+              position={[0, 3.5, 0]}
+              marketCap={marketCap}
+              dominance={dominance}
+              visible={true}
               volume24h={volume24h}
               volumeChangePercent={volumeChangePercent}
             />

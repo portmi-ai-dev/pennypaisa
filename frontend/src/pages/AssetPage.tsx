@@ -8,7 +8,6 @@ import { motion, AnimatePresence } from 'motion/react';
 
 import { GoldBullion } from '../components/GoldBullion';
 import { SilverBullion } from '../components/SilverBullion';
-import { Tether } from '../components/Tether';
 import { BitcoinCuboid } from '../components/BitcoinCuboid';
 import { CursorBackground } from '../components/CursorBackground';
 import { IntelPopup } from '../components/IntelPopup';
@@ -84,7 +83,10 @@ export const AssetPage: React.FC<AssetPageProps> = ({
   const [isMerged, setIsMerged] = useState(false);
   const [morphedGold, setMorphedGold] = useState(false);
   const [morphedSilver, setMorphedSilver] = useState(false);
-  const [showBitcoin, setShowBitcoin] = useState(false);
+  // `showBitcoin` removed — the BitcoinCuboid now renders by default
+  // (no click-the-chain-to-reveal step). Blockchain expansion (the second
+  // cuboid that appears above when the first cuboid is clicked) keeps its
+  // own toggle.
   const [showBlockchain, setShowBlockchain] = useState(false);
   // Tracks which bullion the cursor is over. Currently only the setter is
   // used (the smaller HTML hover popup that read this was removed) — kept
@@ -214,16 +216,15 @@ export const AssetPage: React.FC<AssetPageProps> = ({
                 />
               </AnimatedBullion>
 
-              <Tether
-                startRef={goldRef}
-                endRef={silverRef}
-                visible={!isMerged && !morphedGold && !morphedSilver}
-                onClick={() => setShowBitcoin(!showBitcoin)}
-              />
+              {/* Tether (chain between gold and silver bullion) removed
+                  per spec — the bullion stand on their own; nothing visually
+                  links them. Component import dropped below. */}
 
               <Suspense fallback={null}>
                 <BitcoinCuboid
-                  visible={showBitcoin && !isMerged && !morphedGold && !morphedSilver}
+                  // Always visible (only hidden when bullion is merged or
+                  // morphed) — no click-to-summon required.
+                  visible={!isMerged && !morphedGold && !morphedSilver}
                   price={btcPrice}
                   changePercent={btcChangePercent}
                   weeklyChangePercent={btcWeeklyChangePercent}
