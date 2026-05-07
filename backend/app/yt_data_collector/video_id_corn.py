@@ -475,6 +475,7 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
 
     assemblyai_key = (getattr(_settings, "assemblyai_api_key", "") or "").strip()
     assemblyai_enabled = bool(assemblyai_key)
+    per_video_timeout = _settings.YT_TRANSCRIPT_PER_VIDEO_TIMEOUT_SECONDS
 
     youtube_stored = 0
     assemblyai_stored = 0
@@ -491,12 +492,23 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
         }
 
         # ── 1. YouTube transcript API ────────────────────────────────
+        # ``asyncio.wait_for`` caps per-video wall-clock so a single
+        # hung request can't exhaust the bulk-job budget. NOTE: the
+        # underlying ``to_thread`` cannot be killed — a timed-out
+        # request keeps running in a background thread until the
+        # network call completes naturally — but the loop has already
+        # moved on to the next video.
         try:
-            transcript_raw = await asyncio.to_thread(fetch_transcript_raw, video_id)
+            transcript_raw = await asyncio.wait_for(
+                asyncio.to_thread(fetch_transcript_raw, video_id),
+                timeout=per_video_timeout,
+            )
             await _store_transcript(video_record=record, transcript_raw=transcript_raw)
             logger.info("yt transcript stored (youtube) | video_id=%s", video_id)
             youtube_stored += 1
             continue
+        except asyncio.TimeoutError:
+            yt_reason = f"timeout after {per_video_timeout}s"
         except (NoTranscriptFound, TranscriptsDisabled, CouldNotRetrieveTranscript) as exc:
             yt_reason = f"{type(exc).__name__}: {exc}"
         except Exception as exc:
@@ -516,8 +528,9 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
 
         video_url = f"https://www.youtube.com/watch?v={video_id}"
         try:
-            assemblyai_text = await asyncio.to_thread(
-                _transcribe_video_audio_with_assemblyai, video_url
+            assemblyai_text = await asyncio.wait_for(
+                asyncio.to_thread(_transcribe_video_audio_with_assemblyai, video_url),
+                timeout=per_video_timeout,
             )
             assemblyai_text = (assemblyai_text or "").strip()
             if not assemblyai_text:
@@ -531,6 +544,14 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
                 yt_reason,
             )
             assemblyai_stored += 1
+        except asyncio.TimeoutError:
+            failed += 1
+            logger.warning(
+                "yt transcript failed (both paths) | video_id=%s | yt=%s | assemblyai=timeout after %ss",
+                video_id,
+                yt_reason,
+                per_video_timeout,
+            )
         except Exception as aai_exc:
             failed += 1
             logger.warning(

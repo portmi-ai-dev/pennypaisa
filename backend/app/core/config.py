@@ -40,6 +40,24 @@ class Settings(BaseSettings):
     # assembly ai
     assemblyai_api_key: str = Field(..., description="ASSEMBLY AI API KEY")
 
+    # ── Worker timeouts (arq + per-video) ────────────────────────────────
+    # Whole-job ceiling. Backfill jobs can legitimately churn through dozens
+    # of videos sequentially, so we cap them at 1h by default. Tune up if
+    # the candidate set grows and you'd rather one job sweep everything in
+    # a single pass.
+    YT_BULK_JOB_TIMEOUT_SECONDS: int = Field(
+        60 * 60,
+        description="Max wall-clock seconds for one bulk yt worker job (arq job_timeout).",
+    )
+    # Per-video budget. Each transcript attempt (YouTube API or AssemblyAI
+    # fallback) is wrapped in `asyncio.wait_for` so one stuck video can't
+    # consume the whole bulk-job budget. Default 8 min covers AssemblyAI's
+    # 6-min poll window plus audio download + ffmpeg overhead.
+    YT_TRANSCRIPT_PER_VIDEO_TIMEOUT_SECONDS: int = Field(
+        60 * 8,
+        description="Max wall-clock seconds spent on a single video's transcript attempt.",
+    )
+
     @field_validator("NEON_DATABASE_URL", "YT_CHANNEL_URLS", mode="before")
     @classmethod
     def _empty_to_none(cls, value: str | None) -> str | None:

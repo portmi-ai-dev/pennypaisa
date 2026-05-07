@@ -65,8 +65,16 @@ async def transcript_job(ctx: dict[str, Any], video_url: str) -> dict[str, Any]:
 
     `get_transcript_for_url` is sync (yt-dlp + requests + AssemblyAI poll)
     so we hand it to a thread to avoid blocking the worker's event loop.
+    Wrapped in ``asyncio.wait_for`` against
+    ``YT_TRANSCRIPT_PER_VIDEO_TIMEOUT_SECONDS`` so a hung video never
+    starves the worker; on timeout the underlying thread keeps running
+    in the background until network completes (Python can't kill a
+    thread mid-call), but this coroutine returns control immediately.
     """
-    result: TranscriptResult = await asyncio.to_thread(get_transcript_for_url, video_url)
+    result: TranscriptResult = await asyncio.wait_for(
+        asyncio.to_thread(get_transcript_for_url, video_url),
+        timeout=settings.YT_TRANSCRIPT_PER_VIDEO_TIMEOUT_SECONDS,
+    )
     return {
         "videoId": result.video_id,
         "source": result.source,
@@ -222,6 +230,9 @@ class WorkerSettings:
     # is GC'd from Redis.
     keep_result = 60 * 60
 
-    # Per-job hard timeout. Even worst-case AssemblyAI polling caps at
-    # ~6min; give ourselves headroom for retries + audio download.
-    job_timeout = 60 * 15
+    # Per-job hard timeout — read from settings so a single env var can
+    # widen the budget for bulk backfills without code changes. The
+    # per-video timeout (``YT_TRANSCRIPT_PER_VIDEO_TIMEOUT_SECONDS``)
+    # bounds each individual attempt inside the loop, so any stuck video
+    # is skipped without burning this whole budget.
+    job_timeout = settings.YT_BULK_JOB_TIMEOUT_SECONDS
