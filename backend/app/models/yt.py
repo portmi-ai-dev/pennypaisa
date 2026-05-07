@@ -61,11 +61,16 @@ class TranscriptJobResult(BaseModel):
 
 
 class BackfillScrapeResult(BaseModel):
-    """Result of the ``backfill_scrape_job`` (video IDs only)."""
+    """Result of the ``backfill_scrape_job`` (video IDs only).
+
+    ``channels_timed_out`` counts channels whose scrapetube generator stalled
+    past ``YT_SCRAPE_PER_CHANNEL_TIMEOUT_SECONDS`` and were skipped.
+    """
 
     processed_ids: int
     inserted_ids: int
     insert_failed: int
+    channels_timed_out: int = 0
 
 
 class BackfillTranscriptResult(BaseModel):

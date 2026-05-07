@@ -390,18 +390,61 @@ async def scrape_video_ids_only(
     Splitting lets the caller decide when to spend the much-more-expensive
     transcript fetch budget separately from the cheap ID scrape.
 
-    Returns counts: ``processed_ids``, ``inserted_ids``, ``insert_failed``.
+    Each channel is scraped independently under ``YT_SCRAPE_PER_CHANNEL_TIMEOUT_SECONDS``
+    so a single hung scrapetube generator can't stall the entire job. The
+    underlying ``to_thread`` cannot be cancelled mid-call (Python threads are
+    not killable), but the coroutine returns control immediately on timeout and
+    the loop moves on to the next channel.
+
+    Returns counts: ``processed_ids``, ``inserted_ids``, ``insert_failed``,
+    ``channels_timed_out``.
     """
+    from app.core.config import settings as _settings
+
     await ensure_schema()
 
-    records = fetch_last_month_video_ids(channel_urls=channel_urls, max_age_days=max_age_days)
-    if not records:
-        logger.info("yt scrape: no records returned")
-        return {"processed_ids": 0, "inserted_ids": 0, "insert_failed": 0}
+    per_channel_timeout = _settings.YT_SCRAPE_PER_CHANNEL_TIMEOUT_SECONDS
+
+    all_records: list[dict[str, Any]] = []
+    channels_timed_out = 0
+
+    for channel_url in channel_urls:
+        try:
+            records = await asyncio.wait_for(
+                asyncio.to_thread(
+                    fetch_last_month_video_ids,
+                    channel_urls=(channel_url,),
+                    max_age_days=max_age_days,
+                ),
+                timeout=per_channel_timeout,
+            )
+            all_records.extend(records)
+        except asyncio.TimeoutError:
+            channels_timed_out += 1
+            logger.warning(
+                "yt scrape: channel timeout after %ds | channel=%s",
+                per_channel_timeout,
+                channel_url,
+            )
+        except Exception as exc:
+            logger.warning(
+                "yt scrape: channel failed | channel=%s | reason=%s",
+                channel_url,
+                exc,
+            )
+
+    if not all_records:
+        logger.info("yt scrape: no records returned (channels_timed_out=%d)", channels_timed_out)
+        return {
+            "processed_ids": 0,
+            "inserted_ids": 0,
+            "insert_failed": 0,
+            "channels_timed_out": channels_timed_out,
+        }
 
     inserted = 0
     insert_failed = 0
-    for record in records:
+    for record in all_records:
         try:
             did_insert = await _insert_video_id_if_missing(record)
         except Exception as exc:
@@ -411,11 +454,18 @@ async def scrape_video_ids_only(
         if did_insert:
             inserted += 1
 
-    logger.info("yt scrape: ids processed=%d | inserted=%d | failed=%d", len(records), inserted, insert_failed)
+    logger.info(
+        "yt scrape: ids processed=%d | inserted=%d | failed=%d | channels_timed_out=%d",
+        len(all_records),
+        inserted,
+        insert_failed,
+        channels_timed_out,
+    )
     return {
-        "processed_ids": len(records),
+        "processed_ids": len(all_records),
         "inserted_ids": inserted,
         "insert_failed": insert_failed,
+        "channels_timed_out": channels_timed_out,
     }
 
 

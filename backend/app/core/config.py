@@ -57,6 +57,14 @@ class Settings(BaseSettings):
         60 * 8,
         description="Max wall-clock seconds spent on a single video's transcript attempt.",
     )
+    # Per-channel budget for the scrape stage. scrapetube iterates a channel
+    # across videos/shorts/streams content types; a single blocked network
+    # request can stall the entire scrape. Default 5 min per channel is
+    # generous for a typical 30-day window (usually <200 video IDs).
+    YT_SCRAPE_PER_CHANNEL_TIMEOUT_SECONDS: int = Field(
+        60 * 5,
+        description="Max wall-clock seconds spent scraping one channel's video IDs.",
+    )
 
     @field_validator("NEON_DATABASE_URL", "YT_CHANNEL_URLS", mode="before")
     @classmethod

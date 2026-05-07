@@ -88,6 +88,10 @@ async def backfill_scrape_job(ctx: dict[str, Any], days: int = 10) -> dict[str, 
     Stage 1 of the split-backfill flow. Cheap call relative to transcript
     fetching — separates "what's new on the channels" from "fetch the
     expensive transcripts" so the latter can be scheduled independently.
+
+    Each channel is processed under ``YT_SCRAPE_PER_CHANNEL_TIMEOUT_SECONDS``
+    (default 5 min) so a single hung scrapetube generator can't stall the
+    whole job. Timed-out channels are skipped and counted in the result.
     """
     return await scrape_video_ids_only(
         channel_urls=resolve_channel_urls_from_env(),
