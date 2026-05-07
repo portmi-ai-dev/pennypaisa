@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # assembly ai
     assemblyai_api_key: str = Field(..., description="ASSEMBLY AI API KEY")
 
+    # Groq (optional — fast inference fallback / future use)
+    groq_api_key: str | None = Field(None, description="Groq API key")
+
     # ── Worker timeouts (arq + per-video) ────────────────────────────────
     # Whole-job ceiling. Backfill jobs can legitimately churn through dozens
     # of videos sequentially, so we cap them at 1h by default. Tune up if
