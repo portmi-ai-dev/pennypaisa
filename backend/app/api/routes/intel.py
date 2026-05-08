@@ -1,12 +1,15 @@
 """Market intelligence API routes."""
 
+import asyncio
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.core.rate_limit import limiter
-from app.intel.aggregator import aggregate_sentiments, fetch_asset_sentiment
+from app.intel._common import generate_and_cache
+from app.intel.aggregator import aggregate_sentiments, current_timestamp, fetch_asset_sentiment
 from app.models.intel import AssetSentiment, IntelSentimentResponse
+from app.services.aggregator import aggregate_prices
 
 router = APIRouter(prefix="/api", tags=["intel"])
 
@@ -79,3 +82,35 @@ async def get_asset_sentiment(
             },
         )
     return sentiment
+
+
+@router.post("/intel/sentiment/regenerate", response_model=IntelSentimentResponse)
+@limiter.limit("5/minute")
+async def regenerate_sentiment(request: Request) -> IntelSentimentResponse:
+    """Force-regenerate sentiment for all assets — bypasses cache, writes DB + history.
+
+    Calls Groq for crypto, gold, and silver in parallel, persists results,
+    then returns the freshly generated data. Never returns cached data.
+    """
+    try:
+        prices = await aggregate_prices(request.app.state.http_client)
+        crypto, gold, silver = await asyncio.gather(
+            generate_and_cache("crypto", prices),
+            generate_and_cache("gold", prices),
+            generate_and_cache("silver", prices),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Sentiment regeneration failed",
+                "message": str(exc),
+            },
+        ) from exc
+
+    return IntelSentimentResponse(
+        crypto=crypto,
+        gold=gold,
+        silver=silver,
+        timestamp=current_timestamp(),
+    )

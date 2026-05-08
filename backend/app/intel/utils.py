@@ -1,7 +1,7 @@
 """Groq-driven sentiment generation — prompt → validated `AssetSentiment`.
 
-Uses qwen/qwen3-32b with thinking mode (reasoning_effort="default") and
-strict JSON schema output to guarantee exact 5-field response every time.
+Uses openai/gpt-oss-20b with reasoning and strict JSON schema output.
+Strict mode guarantees exact 5-field response every time via constrained decoding.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Groq strict JSON schema — 5 fields only
+# Strict JSON schema — 5 fields
 # ---------------------------------------------------------------------------
 
 _GROQ_RESPONSE_FORMAT: dict[str, Any] = {
@@ -87,25 +87,33 @@ def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | N
 
 
 def _parse_sentiment(text: str) -> AssetSentiment:
-    """Parse Groq strict-mode JSON into an `AssetSentiment`.
+    """Parse strict-mode JSON into an `AssetSentiment`.
 
-    Strict mode guarantees exact schema so no fence-stripping or coercion needed.
+    Strict mode guarantees valid JSON with exact schema — no fence-stripping needed.
     """
     payload = json.loads(text)
 
     if not isinstance(payload, dict):
         raise ValueError("Groq payload is not an object")
 
-    market_type = str(payload["marketType"]).lower()
+    market_type = str(payload.get("marketType", "neutral")).lower()
     if market_type not in {"bull", "bear", "neutral"}:
         market_type = "neutral"
 
-    confidence = str(payload["confidence"]).lower()
-    if confidence not in {"low", "medium", "high"}:
+    confidence = payload.get("confidence")
+    if isinstance(confidence, str):
+        confidence = confidence.lower()
+        if confidence not in {"low", "medium", "high"}:
+            confidence = None
+    else:
         confidence = None
 
-    horizon = str(payload["horizon"]).lower()
-    if horizon not in {"short-term", "medium-term", "long-term"}:
+    horizon = payload.get("horizon")
+    if isinstance(horizon, str):
+        horizon = horizon.lower()
+        if horizon not in {"short-term", "medium-term", "long-term"}:
+            horizon = None
+    else:
         horizon = None
 
     reasoning = _trim_words(str(payload.get("reasoning", "")), 35)
@@ -125,9 +133,11 @@ def _parse_sentiment(text: str) -> AssetSentiment:
 # Groq call
 # ---------------------------------------------------------------------------
 
+_MODEL = "openai/gpt-oss-20b"
+
 
 async def generate_sentiment(prompt: str) -> GenerationResult:
-    """Run the prompt through Groq qwen3-32b and return parsed sentiment + metadata.
+    """Run the prompt through Groq and return parsed sentiment + metadata.
 
     Returns a ``GenerationResult`` with ``sentiment=None`` on any failure —
     the aggregator treats missing assets as optional so a partial response
@@ -140,12 +150,9 @@ async def generate_sentiment(prompt: str) -> GenerationResult:
 
     try:
         response = await client.chat.completions.create(
-            model="qwen/qwen3-32b",
+            model=_MODEL,
             messages=[{"role": "user", "content": prompt}],
-            reasoning_effort="default",
-            reasoning_format="hidden",
-            temperature=0.6,
-            top_p=0.95,
+            max_tokens=4096,
             response_format=_GROQ_RESPONSE_FORMAT,
         )
     except Exception as exc:

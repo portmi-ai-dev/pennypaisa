@@ -14,7 +14,6 @@ import asyncio
 import logging
 from typing import Any, Literal
 
-from app.core.config import settings
 from app.intel import cache
 from app.intel.prompts import build_prompt
 from app.intel.utils import generate_sentiment
@@ -42,7 +41,7 @@ async def generate_and_cache(
             result.sentiment,
             prompt=prompt,
             raw_response=result.raw_text,
-            model=settings.GEMINI_MODEL,
+            model="openai/gpt-oss-20b",
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
             total_tokens=result.total_tokens,
