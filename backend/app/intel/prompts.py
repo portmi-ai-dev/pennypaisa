@@ -19,9 +19,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
+import logging
 
 Asset = Literal["gold", "silver", "crypto"]
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -98,12 +100,7 @@ _SCHEMA_SPEC = """Respond with pure JSON (no markdown, no prose, no code fences)
   "confidence": "low" | "medium" | "high",
   "horizon": "short-term" | "medium-term" | "long-term",
   "reasoning": "<=35 word thesis synthesising macro + technical + flows. No hedging filler.",
-  "analystView": "<=55 word institutional analyst take fusing macro/cycle context (cycle position, key moving averages, risk-on/off) with precise technical structure (levels, patterns, targets, invalidations).",
-  "technicalSignal": "<=20 word read on trend + momentum + nearest level to watch.",
-  "macroContext": "<=25 word description of the dominant macro driver right now (Fed, DXY, liquidity, geopolitics).",
-  "keyLevels": { "support": "<nearest major support>", "resistance": "<nearest major resistance>" },
-  "catalysts": ["<=3 near-term bullish or neutral catalysts, each <=12 words>"],
-  "risks": ["<=3 concrete downside risks, each <=12 words>"]
+  "analystView": "<=55 word institutional analyst take fusing macro/cycle context (cycle position, key moving averages, risk-on/off) with precise technical structure (levels, patterns, targets, invalidations)."
 }
 
 Hard rules:
@@ -166,6 +163,13 @@ def build_prompt(asset: Asset, prices: dict[str, Any] | None = None) -> str:
     today = today_str()
     frame = _FRAMES[asset]()
     price_ctx = format_price_context(prices, asset)
+
+    logger.info(
+        "Intel price snapshot — gold=%s silver=%s btc=%s",
+        prices.get("gold"),
+        prices.get("silver"),
+        prices.get("btc"),
+    )
 
     return (
         f"{frame}\n"

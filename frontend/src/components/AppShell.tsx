@@ -7,19 +7,17 @@ import { AssetPage } from '../pages/AssetPage';
 import { IntelligencePage } from '../pages/IntelligencePage';
 import { CapitalFlowPage } from '../pages/CapitalFlowPage';
 import { ChatPage } from '../pages/ChatPage';
-import { type AssetSentiment, type Prices, type Sentiments } from '../lib/marketData';
+import { type Prices, type Sentiments } from '../lib/marketData';
 import { PATH_TO_PAGE, type PageId } from '../lib/routes';
 
-// Shape returned by /api/intel/sentiment[/asset]. Wider than AssetSentiment —
-// the extra fields are stored as state but not yet consumed by any UI.
-type Sentiment = AssetSentiment & {
+// Shape returned by /api/intel/sentiment[/asset].
+type Sentiment = {
+  marketType: 'bull' | 'bear' | 'neutral';
   confidence?: 'low' | 'medium' | 'high';
   horizon?: 'short-term' | 'medium-term' | 'long-term';
-  technicalSignal?: string;
-  macroContext?: string;
-  keyLevels?: { support?: string | null; resistance?: string | null } | null;
-  catalysts?: string[];
-  risks?: string[];
+  reasoning: string;
+  analystView: string;
+  lastUpdated?: string | null;
 };
 
 export const AppShell: React.FC = () => {

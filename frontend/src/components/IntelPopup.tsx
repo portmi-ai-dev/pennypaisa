@@ -16,17 +16,17 @@ const ACCENT: Record<'gold' | 'silver' | 'bitcoin', { primary: string; secondary
   gold: {
     primary: '#d4a843',
     secondary: '#b88f2c',
-    title: 'GOLD MARKET INTELLIGENCE',
+    title: 'GOLD MARKET SENTIMENT',
   },
   silver: {
     primary: '#b8c4cc',
     secondary: '#8fa3ad',
-    title: 'SILVER MARKET INTELLIGENCE',
+    title: 'SILVER MARKET SENTIMENT',
   },
   bitcoin: {
     primary: '#f7931a',
     secondary: '#c66f0c',
-    title: 'BITCOIN MARKET INTELLIGENCE',
+    title: 'BITCOIN MARKET SENTIMENT',
   },
 };
 
@@ -184,7 +184,7 @@ export const IntelPopup: React.FC<IntelPopupProps> = ({
               textAlign: 'center',
             }}
           >
-            AI Aggregated Sentiment ·{' '}
+            AI Sentiment ·{' '}
             {sentiment.lastUpdated ? `Updated ${sentiment.lastUpdated}` : 'Live data'}
           </div>
         </motion.div>
