@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from youtube_transcript_api import (
@@ -18,12 +19,31 @@ from app.yt_data_collector.one_month_video_ids import fetch_last_month_video_ids
 
 logger = logging.getLogger(__name__)
 
-# Default channels (copied from archived scraper).
-DEFAULT_CHANNEL_URLS: tuple[str, ...] = (
-    "https://www.youtube.com/channel/UCRvqjQPSeaWn-uEx-w0XOIg",  # Benjamin Cowen
-    "https://www.youtube.com/channel/UCanAtEpNJ2H9otfsgcLlu0w",  # Trade Smarter with Chris Vermeulen
-    "https://www.youtube.com/channel/UCwTu6kD2igaLMpxswtcdxlg",  # Gareth Soloway
-)
+_CHANNELS_JSON = Path(__file__).parent.parent / "core" / "channels.json"
+
+# ---------------------------------------------------------------------------
+# Channel registry — backed by channels.json
+# ---------------------------------------------------------------------------
+
+
+def load_channel_urls() -> tuple[str, ...]:
+    """Load channel URLs from channels.json at the backend root.
+
+    Falls back to an empty tuple (cron skips gracefully) if the file is
+    missing or malformed — avoids hard crash on misconfigured deploys.
+    """
+    try:
+        channels: list[dict[str, str]] = json.loads(_CHANNELS_JSON.read_text())
+        urls = tuple(c["url"] for c in channels if c.get("url"))
+        if not urls:
+            logger.warning("channels.json exists but contains no valid URLs")
+        return urls
+    except FileNotFoundError:
+        logger.warning("channels.json not found at %s", _CHANNELS_JSON)
+        return ()
+    except Exception as exc:
+        logger.warning("channels.json load failed: %s", exc)
+        return ()
 
 # DB helpers
 def _parse_date(value: object) -> date | None:
@@ -70,23 +90,6 @@ def _parse_timestamptz(value: object) -> datetime | None:
 # Every hour, same cadence as market intelligence refresher.
 REFRESH_INTERVAL_SECONDS = 60 * 60
 INITIAL_DELAY_SECONDS = 30
-
-
-def resolve_channel_urls_from_env() -> tuple[str, ...]:
-    """Reads `YT_CHANNEL_URLS` as comma-separated channel URLs (optional).
-
-    Loaded via `app.core.config.Settings` from `backend/.env` (or exported env vars).
-    """
-    from app.core.config import settings
-
-    raw = (settings.YT_CHANNEL_URLS or "").strip()
-
-    if not raw:
-        return DEFAULT_CHANNEL_URLS
-
-    parts = [p.strip() for p in raw.split(",")]
-    urls = tuple(p for p in parts if p)
-    return urls or DEFAULT_CHANNEL_URLS
 
 
 DDL = """

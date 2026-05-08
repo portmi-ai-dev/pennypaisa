@@ -40,7 +40,7 @@ from app.core.config import settings
 from app.core.database import close_db, connect_db
 from app.yt_data_collector.video_id_corn import (
     ensure_schema as ensure_yt_schema,
-    resolve_channel_urls_from_env,
+    load_channel_urls,
     scrape_video_ids_only,
     sync_latest_video_ids_and_transcripts,
     transcribe_missing,
@@ -94,7 +94,7 @@ async def backfill_scrape_job(ctx: dict[str, Any], days: int = 10) -> dict[str, 
     whole job. Timed-out channels are skipped and counted in the result.
     """
     return await scrape_video_ids_only(
-        channel_urls=resolve_channel_urls_from_env(),
+        channel_urls=load_channel_urls(),
         max_age_days=days,
     )
 
