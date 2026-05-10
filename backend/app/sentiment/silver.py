@@ -2,8 +2,8 @@
 
 from typing import Any
 
-from app.intel._common import generate_and_cache, get_or_swr
-from app.models.intel import AssetSentiment
+from app.sentiment._common import generate_and_cache, get_or_swr
+from app.models.sentiment import AssetSentiment
 
 
 async def fetch_silver_sentiment(

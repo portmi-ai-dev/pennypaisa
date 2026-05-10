@@ -7,8 +7,8 @@ from app.core.config import settings
 from app.core.database import close_db, connect_db
 from app.core.http import create_http_client
 from app.core.redis_client import close_redis, connect_redis
-from app.intel.refresher import run_refresher
-from app.intel.schema import ensure_schema
+from app.sentiment.refresher import run_refresher
+from app.sentiment.schema import ensure_schema
 from app.yt_data_collector.video_id_corn import ensure_schema as ensure_yt_schema
 
 

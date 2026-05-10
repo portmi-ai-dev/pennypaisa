@@ -6,7 +6,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from app.api import api_router
 from app.api.chat import router as chat_router
 from app.api.routes.prices import router as prices_router
-from app.api.routes.intel import router as intel_router
+from app.api.routes.sentiment import router as sentiment_router
 from app.api.routes.yt_backfill import router as yt_router
 from app.api.routes.yt_transcriber import router as yt_transcriber_router
 from app.core.lifespan import lifespan
@@ -22,7 +22,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.include_router(api_router)
 app.include_router(chat_router)
 app.include_router(prices_router)
-app.include_router(intel_router)
+app.include_router(sentiment_router)
 app.include_router(yt_router)
 app.include_router(yt_transcriber_router)
 

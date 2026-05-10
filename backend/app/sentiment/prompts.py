@@ -90,7 +90,7 @@ def format_price_context(prices: dict[str, Any] | None, asset: Asset) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Schema contract — kept in sync with AssetSentiment in app.models.intel
+# Schema contract — kept in sync with AssetSentiment in app.models.sentiment
 # ---------------------------------------------------------------------------
 
 _SCHEMA_SPEC = """Respond with pure JSON (no markdown, no prose, no code fences) matching exactly this schema:
@@ -158,25 +158,40 @@ _FRAMES = {
 }
 
 
-def build_prompt(asset: Asset, prices: dict[str, Any] | None = None) -> str:
-    """Build the full analyst prompt for the given asset."""
+def build_prompt(
+    asset: Asset,
+    prices: dict[str, Any] | None = None,
+    transcript_block: str = "",
+) -> str:
+    """Build the full analyst prompt for the given asset.
+
+    ``transcript_block`` is an optional pre-formatted block of recent
+    YouTube analyst commentary (from ``transcripts.format_transcripts_for_prompt``).
+    When present it's injected as additional signal for the model.
+    """
     today = today_str()
     frame = _FRAMES[asset]()
     price_ctx = format_price_context(prices, asset)
 
     logger.info(
-        "Intel price snapshot — gold=%s silver=%s btc=%s",
+        "Sentiment price snapshot — gold=%s silver=%s btc=%s",
         prices.get("gold"),
         prices.get("silver"),
         prices.get("btc"),
     )
 
+    transcript_section = ""
+    if transcript_block:
+        transcript_section = f"\n{transcript_block}\n"
+
     return (
         f"{frame}\n"
         f"DATE: {today}. Use only information valid as of today — no stale narratives.\n"
-        f"{price_ctx}\n\n"
+        f"{price_ctx}\n"
+        f"{transcript_section}\n"
         "Synthesise current macro/cycle reasoning (Benjamin-Cowen-style frameworks) with precise "
-        "technical structure (Gareth-Soloway-style level work) into ONE fused analyst view. Do NOT "
+        "technical structure (Gareth-Soloway-style level work) into ONE fused analyst view. "
+        "Incorporate insights from recent YouTube analyst commentary when available. Do NOT "
         "attribute or quote — produce a single coherent institutional take.\n\n"
         f"{_SCHEMA_SPEC}"
     )

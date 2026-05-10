@@ -14,7 +14,7 @@ Cache lifecycle:
       old row (stale-while-revalidate) while a background task regenerates
       it. Belt-and-suspenders for a slow / failed cron tick.
 
-Tables (see ``app/intel/schema.py``):
+Tables (see ``app/sentiment/schema.py``):
     * ``intel_sentiment_cache`` — 1 row per asset, UPSERTed on write.
     * ``intel_sentiment_history`` — append-only log of every Gemini call,
       with prompt + parsed/raw response + token usage + model.
@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from app.core.database import get_db
-from app.models.intel import AssetSentiment
+from app.models.sentiment import AssetSentiment
 
 logger = logging.getLogger(__name__)
 

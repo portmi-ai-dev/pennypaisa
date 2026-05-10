@@ -16,7 +16,7 @@ from groq import AsyncGroq
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.models.intel import AssetSentiment
+from app.models.sentiment import AssetSentiment
 
 
 @dataclass(slots=True)

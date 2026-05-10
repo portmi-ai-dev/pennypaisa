@@ -15,8 +15,8 @@ import asyncio
 import logging
 from typing import get_args
 
-from app.intel import cache
-from app.intel._common import Asset, generate_and_cache
+from app.sentiment import cache
+from app.sentiment._common import Asset, clear_transcript_cache, generate_and_cache
 from app.services.aggregator import aggregate_prices
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,8 @@ async def _refresh_one(http_client, asset: Asset) -> None:
 
 async def _refresh_all(http_client) -> None:
     """Refresh all assets in parallel — each holds its own lock."""
+    # Clear transcript cache so each hourly cycle fetches fresh transcripts
+    clear_transcript_cache()
     await asyncio.gather(
         *(_refresh_one(http_client, asset) for asset in get_args(Asset)),
         return_exceptions=True,

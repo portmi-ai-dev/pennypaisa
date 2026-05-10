@@ -9,11 +9,11 @@ from typing import Literal
 
 import httpx
 
-from app.intel._common import get_or_swr
-from app.intel.btc import fetch_crypto_sentiment
-from app.intel.gold import fetch_gold_sentiment
-from app.intel.silver import fetch_silver_sentiment
-from app.models.intel import AssetSentiment, IntelSentimentResponse
+from app.sentiment._common import get_or_swr
+from app.sentiment.btc import fetch_crypto_sentiment
+from app.sentiment.gold import fetch_gold_sentiment
+from app.sentiment.silver import fetch_silver_sentiment
+from app.models.sentiment import AssetSentiment, IntelSentimentResponse
 from app.services.aggregator import aggregate_prices
 
 logger = logging.getLogger(__name__)

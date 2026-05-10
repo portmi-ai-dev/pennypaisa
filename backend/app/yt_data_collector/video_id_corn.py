@@ -132,7 +132,8 @@ CREATE TABLE IF NOT EXISTS video_transcripts (
 ALTER TABLE video_transcripts
     ALTER COLUMN transcript_raw DROP NOT NULL,
     ADD COLUMN IF NOT EXISTS assembly_ai_transcript TEXT,
-    ADD COLUMN IF NOT EXISTS transcript_source      TEXT;
+    ADD COLUMN IF NOT EXISTS transcript_source      TEXT,
+    ADD COLUMN IF NOT EXISTS clean_transcript       TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_video_transcripts_fetch_date
     ON video_transcripts (transcript_fetch_date_utc DESC);
@@ -146,6 +147,42 @@ async def ensure_schema() -> None:
         logger.info("video_ids/video_transcripts schema ready")
     except Exception as exc:
         logger.warning("Failed to ensure yt schema: %s", exc)
+
+
+def extract_clean_transcript(
+    transcript_raw: dict[str, Any] | None = None,
+    assembly_ai_transcript: str | None = None,
+) -> str | None:
+    """Extract plain text from either transcript source.
+
+    transcript_raw (YouTube API): JSON with tracks[].raw_entries[].text
+    assembly_ai_transcript: already plain text, use as-is.
+
+    Returns a single clean string or None if both sources are empty.
+    """
+    # Prefer YouTube raw (has timestamps, more structured) when available
+    if transcript_raw is not None:
+        try:
+            tracks = transcript_raw.get("tracks", [])
+            if isinstance(tracks, list) and tracks:
+                # Use first track (usually the auto-generated or primary language)
+                raw_entries = tracks[0].get("raw_entries", [])
+                if isinstance(raw_entries, list) and raw_entries:
+                    texts = [
+                        entry.get("text", "").strip()
+                        for entry in raw_entries
+                        if isinstance(entry, dict) and entry.get("text", "").strip()
+                    ]
+                    if texts:
+                        return " ".join(texts)
+        except Exception:
+            pass
+
+    # Fallback to AssemblyAI (already plain text)
+    if assembly_ai_transcript and assembly_ai_transcript.strip():
+        return assembly_ai_transcript.strip()
+
+    return None
 
 
 def _entry_to_dict(entry: Any) -> dict[str, Any]:
@@ -330,6 +367,8 @@ async def _store_transcript(
     else:
         source_label = "assemblyai"
 
+    clean_text = extract_clean_transcript(transcript_raw, assembly_ai_transcript)
+
     async with get_db() as conn:
         await conn.execute(
             """
@@ -342,9 +381,10 @@ async def _store_transcript(
                 transcript_raw,
                 source_video_metadata,
                 assembly_ai_transcript,
-                transcript_source
+                transcript_source,
+                clean_transcript
             )
-            VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)
+            VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10)
             ON CONFLICT (video_id) DO UPDATE SET
                 transcript_raw = COALESCE(video_transcripts.transcript_raw, EXCLUDED.transcript_raw),
                 assembly_ai_transcript = COALESCE(video_transcripts.assembly_ai_transcript, EXCLUDED.assembly_ai_transcript),
@@ -356,6 +396,7 @@ async def _store_transcript(
                         THEN 'youtube'
                     ELSE 'assemblyai'
                 END,
+                clean_transcript = COALESCE(EXCLUDED.clean_transcript, video_transcripts.clean_transcript),
                 transcript_fetch_date_utc = EXCLUDED.transcript_fetch_date_utc;
             """,
             video_id,
@@ -367,6 +408,7 @@ async def _store_transcript(
             source_json,
             assembly_ai_transcript,
             source_label,
+            clean_text,
         )
 
 

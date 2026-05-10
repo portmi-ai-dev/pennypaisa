@@ -1,11 +1,11 @@
-"""Shared cache + Gemini orchestration for the per-asset fetchers.
+"""Shared cache + Groq orchestration for the per-asset fetchers.
 
 Three behaviours all the fetchers need:
 
 1. **Cache hit** → return immediately.
 2. **Stale-while-revalidate** → return the stale row, kick off a background
-   refresh under a per-asset advisory lock so only one worker calls Gemini.
-3. **Cold miss** → block on a fresh Gemini call (rare under healthy cron).
+   refresh under a per-asset advisory lock so only one worker calls Groq.
+3. **Cold miss** → block on a fresh Groq call (rare under healthy cron).
 """
 
 from __future__ import annotations
@@ -14,26 +14,58 @@ import asyncio
 import logging
 from typing import Any, Literal
 
-from app.intel import cache
-from app.intel.prompts import build_prompt
-from app.intel.utils import generate_sentiment
-from app.models.intel import AssetSentiment
+from app.sentiment import cache
+from app.sentiment.prompts import build_prompt
+from app.sentiment.transcripts import (
+    fetch_recent_transcripts,
+    format_transcripts_for_prompt,
+)
+from app.sentiment.utils import generate_sentiment
+from app.models.sentiment import AssetSentiment
 
 logger = logging.getLogger(__name__)
 
 Asset = Literal["gold", "silver", "crypto"]
+
+# Module-level transcript cache: fetched once per refresh cycle, shared
+# across all three asset calls so we don't hit the DB 3x.
+_transcript_block_cache: str | None = None
+
+
+async def _get_transcript_block() -> str:
+    """Fetch and format recent transcripts, with simple in-memory cache."""
+    global _transcript_block_cache
+    if _transcript_block_cache is not None:
+        return _transcript_block_cache
+    try:
+        transcripts = await fetch_recent_transcripts()
+        _transcript_block_cache = format_transcripts_for_prompt(transcripts)
+    except Exception as exc:
+        logger.warning("Failed to fetch transcripts for sentiment: %s", exc)
+        _transcript_block_cache = ""
+    return _transcript_block_cache
+
+
+def clear_transcript_cache() -> None:
+    """Reset the transcript cache — called at the start of each refresh cycle."""
+    global _transcript_block_cache
+    _transcript_block_cache = None
 
 
 async def generate_and_cache(
     asset: Asset,
     prices: dict[str, Any] | None = None,
 ) -> AssetSentiment | None:
-    """Call Gemini for ``asset`` and persist cache + history.
+    """Call Groq for ``asset`` and persist cache + history.
 
     Used by the cold-miss path AND the cron worker. Always writes both
     tables; the history row carries prompt + raw + token counts.
+
+    Fetches recent YouTube analyst transcripts and includes them as
+    additional signal in the prompt.
     """
-    prompt = build_prompt(asset, prices)
+    transcript_block = await _get_transcript_block()
+    prompt = build_prompt(asset, prices, transcript_block=transcript_block)
     result = await generate_sentiment(prompt)
     if result.sentiment is not None:
         await cache.set_cached(
