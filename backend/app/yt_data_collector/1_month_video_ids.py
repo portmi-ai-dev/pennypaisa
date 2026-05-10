@@ -32,12 +32,6 @@ def parse_args() -> argparse.Namespace:
         help="Max age in days (default: 30).",
     )
     parser.add_argument(
-        "--resolve-exact-publish-date",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Fallback to yt-dlp when relative publish time is missing (default: false).",
-    )
-    parser.add_argument(
         "--output-jsonl",
         default=None,
         help="Write JSONL output to this path (defaults to stdout).",
@@ -52,7 +46,6 @@ def main() -> None:
     records = fetch_last_month_video_ids(
         channel_urls=tuple(args.channel_urls),
         max_age_days=max(1, int(args.max_age_days)),
-        resolve_exact_publish_date=bool(args.resolve_exact_publish_date),
     )
     text = records_to_jsonl(records)
 

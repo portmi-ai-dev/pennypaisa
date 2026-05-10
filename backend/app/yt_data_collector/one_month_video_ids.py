@@ -4,175 +4,133 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from pathlib import Path
+from typing import Any
 
-import scrapetube
-from yt_dlp import YoutubeDL
+import httpx
 
 logger = logging.getLogger(__name__)
 
+_YT_API_BASE = "https://www.googleapis.com/youtube/v3"
+_CHANNELS_JSON = Path(__file__).parent.parent / "core" / "channels.json"
 
-CONTENT_TYPES = ("videos", "shorts", "streams")
 
-# Best-effort channel display names (for known default channels).
-CHANNEL_NAME_OVERRIDES: dict[str, str] = {
-    "https://www.youtube.com/channel/UCRvqjQPSeaWn-uEx-w0XOIg": "Benjamin Cowen",
-    "https://www.youtube.com/channel/UCanAtEpNJ2H9otfsgcLlu0w": "Trade Smarter with Chris Vermeulen",
-    "https://www.youtube.com/channel/UCwTu6kD2igaLMpxswtcdxlg": "Gareth Soloway",
-}
+def _build_name_map() -> dict[str, str]:
+    try:
+        channels: list[dict[str, str]] = json.loads(_CHANNELS_JSON.read_text())
+        return {c["url"].rstrip("/"): c.get("name", "") for c in channels if c.get("url")}
+    except Exception:
+        return {}
 
 
 def channel_url_to_name(channel_url: str) -> str:
-    channel_url = (channel_url or "").strip()
+    channel_url = (channel_url or "").strip().rstrip("/")
     if not channel_url:
         return ""
-    if channel_url in CHANNEL_NAME_OVERRIDES:
-        return CHANNEL_NAME_OVERRIDES[channel_url]
-    # Fallback: use the last path segment (e.g. channel id).
-    return channel_url.rstrip("/").split("/")[-1]
+    name_map = _build_name_map()
+    if channel_url in name_map:
+        return name_map[channel_url]
+    return channel_url.split("/")[-1]
 
 
-def extract_text(value: Any) -> str:
-    if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, dict):
-        simple_text = value.get("simpleText")
-        if isinstance(simple_text, str):
-            return simple_text.strip()
-        runs = value.get("runs")
-        if isinstance(runs, list):
-            parts = [run.get("text", "") for run in runs if isinstance(run, dict)]
-            return "".join(parts).strip()
-    return ""
+def _extract_channel_id(channel_url: str) -> str:
+    match = re.search(r"/channel/(UC[a-zA-Z0-9_-]+)", channel_url)
+    if match:
+        return match.group(1)
+    raise ValueError(f"Cannot extract channel ID from: {channel_url}")
 
 
-def parse_view_count(view_text: str) -> int | None:
-    if not view_text:
+def _channel_id_to_uploads_playlist(channel_id: str) -> str:
+    return "UU" + channel_id[2:]
+
+
+def _parse_iso8601_duration(duration: str) -> int | None:
+    if not duration:
         return None
-    digits = re.sub(r"[^0-9]", "", view_text)
-    if not digits:
-        return None
-    try:
-        return int(digits)
-    except ValueError:
-        return None
-
-
-def parse_duration_seconds(length_text: str) -> int | None:
-    if not length_text:
-        return None
-    parts = length_text.strip().split(":")
-    if not parts or not all(part.isdigit() for part in parts):
-        return None
-    numbers = [int(part) for part in parts]
-    if len(numbers) == 3:
-        hours, minutes, seconds = numbers
-        return hours * 3600 + minutes * 60 + seconds
-    if len(numbers) == 2:
-        minutes, seconds = numbers
-        return minutes * 60 + seconds
-    if len(numbers) == 1:
-        return numbers[0]
-    return None
-
-
-def _calculate_publish_datetime(relative_str: str | None, fetch_date: datetime | None) -> datetime | None:
-    """Back-calculates the publish datetime from relative strings like '15 hours ago'."""
-    if not relative_str or not fetch_date:
-        return None
-    s = relative_str.lower().strip()
-    match = re.search(r"(\d+)\s+(year|month|week|day|hour|minute|second)", s)
+    match = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", duration)
     if not match:
         return None
-    amount = int(match.group(1))
-    unit = match.group(2)
-
-    if "year" in unit:
-        delta = timedelta(days=amount * 365)
-    elif "month" in unit:
-        delta = timedelta(days=amount * 30)
-    elif "week" in unit:
-        delta = timedelta(weeks=amount)
-    elif "day" in unit:
-        delta = timedelta(days=amount)
-    elif "hour" in unit:
-        delta = timedelta(hours=amount)
-    elif "minute" in unit:
-        delta = timedelta(minutes=amount)
-    elif "second" in unit:
-        delta = timedelta(seconds=amount)
-    else:
-        return None
-
-    return fetch_date - delta
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    return hours * 3600 + minutes * 60 + seconds
 
 
-def _parse_yyyymmdd_to_datetime_utc(date_text: str | None) -> datetime | None:
-    if not date_text or len(date_text) != 8 or not date_text.isdigit():
-        return None
-    try:
-        d = datetime.strptime(date_text, "%Y%m%d").replace(tzinfo=timezone.utc)
-        return d
-    except ValueError:
-        return None
+def _classify_content_type(
+    duration_seconds: int | None,
+    has_live_details: bool,
+) -> str:
+    if has_live_details:
+        return "streams"
+    if duration_seconds is not None and duration_seconds <= 60:
+        return "shorts"
+    return "videos"
 
 
-def _resolve_publish_datetime_utc(video_id: str) -> datetime | None:
-    """Fallback exact publish timestamp via yt-dlp (slower, but robust)."""
-    video_url = f"https://www.youtube.com/watch?v={video_id}"
-    ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "extract_flat": False,
-    }
-    with YoutubeDL(ydl_opts) as ydl:
-        info: dict[str, Any] = ydl.extract_info(video_url, download=False)
+def _fetch_video_details(
+    video_ids: list[str],
+    api_key: str,
+    client: httpx.Client,
+) -> dict[str, dict[str, Any]]:
+    """Batch fetch video details. Up to 50 IDs per request (API limit)."""
+    details: dict[str, dict[str, Any]] = {}
 
-    timestamp = info.get("release_timestamp") or info.get("timestamp")
-    if isinstance(timestamp, (int, float)):
-        return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    for i in range(0, len(video_ids), 50):
+        batch = video_ids[i : i + 50]
+        resp = client.get(
+            f"{_YT_API_BASE}/videos",
+            params={
+                "part": "contentDetails,statistics,liveStreamingDetails",
+                "id": ",".join(batch),
+                "key": api_key,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
-    upload_date = info.get("upload_date")
-    if upload_date:
-        parsed = _parse_yyyymmdd_to_datetime_utc(str(upload_date))
-        if parsed:
-            return parsed
+        for item in data.get("items", []):
+            vid = item["id"]
+            cd = item.get("contentDetails", {})
+            stats = item.get("statistics", {})
+            has_live = "liveStreamingDetails" in item
 
-    release_date = info.get("release_date")
-    if release_date:
-        parsed = _parse_yyyymmdd_to_datetime_utc(str(release_date))
-        if parsed:
-            return parsed
+            duration_seconds = _parse_iso8601_duration(cd.get("duration", ""))
+            view_count = None
+            vc_str = stats.get("viewCount")
+            if vc_str and vc_str.isdigit():
+                view_count = int(vc_str)
 
-    return None
+            details[vid] = {
+                "duration_seconds": duration_seconds,
+                "view_count": view_count,
+                "content_type": _classify_content_type(duration_seconds, has_live),
+            }
 
-
-def _iter_channel_entries(
-    *,
-    channel_url: str,
-    content_type: str,
-) -> Iterable[dict[str, Any]]:
-    return scrapetube.get_channel(
-        channel_url=channel_url,
-        content_type=content_type,
-        sort_by="newest",
-    )
+    return details
 
 
 def fetch_last_month_video_ids(
     *,
     channel_urls: tuple[str, ...],
     max_age_days: int = 30,
-    resolve_exact_publish_date: bool = False,
+    api_key: str | None = None,
     now_utc: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch videos/shorts/streams for the last month across channels.
+    """Fetch videos/shorts/streams via YouTube Data API v3.
 
-    Returns list of dicts with keys:
-    channel_url, video_id, video_title, description_snippet,
-    content_type, video_length.seconds, view_count.value, video_publish_date, fetch_date_utc
+    Uses the channel's uploads playlist (UU...) for reliable enumeration,
+    then batch-fetches video details for duration, view count, and content
+    type classification.
     """
+    if api_key is None:
+        from app.core.config import settings
+        api_key = settings.YOUTUBE_API_KEY
+
+    if not api_key:
+        logger.error("YOUTUBE_API_KEY not configured")
+        return []
+
     if now_utc is None:
         now_utc = datetime.now(timezone.utc)
     if now_utc.tzinfo is None:
@@ -180,62 +138,106 @@ def fetch_last_month_video_ids(
 
     cutoff = now_utc - timedelta(days=max_age_days)
     fetched_at_utc = now_utc.isoformat()
-
     records: list[dict[str, Any]] = []
 
-    for channel_url in channel_urls:
-        for content_type in CONTENT_TYPES:
-            scraped = 0
-            kept = 0
-            for raw_entry in _iter_channel_entries(channel_url=channel_url, content_type=content_type):
-                scraped += 1
-                video_id = raw_entry.get("videoId")
-                if not video_id:
-                    continue
+    with httpx.Client() as client:
+        for channel_url in channel_urls:
+            try:
+                channel_id = _extract_channel_id(channel_url)
+            except ValueError as exc:
+                logger.warning("Skipping channel: %s", exc)
+                continue
 
-                title = extract_text(raw_entry.get("title"))
-                description = extract_text(raw_entry.get("descriptionSnippet"))
-                length_text = extract_text(raw_entry.get("lengthText"))
-                view_count_text = extract_text(raw_entry.get("viewCountText"))
-                published_relative_text = extract_text(raw_entry.get("publishedTimeText"))
+            uploads_playlist = _channel_id_to_uploads_playlist(channel_id)
+            channel_name = channel_url_to_name(channel_url)
 
-                publish_dt = _calculate_publish_datetime(published_relative_text, now_utc)
-                if publish_dt is None and resolve_exact_publish_date:
+            page_token: str | None = None
+            channel_video_ids: list[str] = []
+            channel_items: list[dict[str, Any]] = []
+            reached_cutoff = False
+
+            while not reached_cutoff:
+                params: dict[str, Any] = {
+                    "part": "snippet,contentDetails",
+                    "playlistId": uploads_playlist,
+                    "maxResults": 50,
+                    "key": api_key,
+                }
+                if page_token:
+                    params["pageToken"] = page_token
+
+                resp = client.get(
+                    f"{_YT_API_BASE}/playlistItems",
+                    params=params,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                for item in data.get("items", []):
+                    snippet = item.get("snippet", {})
+                    cd = item.get("contentDetails", {})
+                    video_id = (
+                        cd.get("videoId")
+                        or snippet.get("resourceId", {}).get("videoId")
+                    )
+                    if not video_id:
+                        continue
+
+                    published_str = (
+                        cd.get("videoPublishedAt")
+                        or snippet.get("publishedAt")
+                    )
+                    if not published_str:
+                        continue
+
                     try:
-                        publish_dt = _resolve_publish_datetime_utc(str(video_id))
-                    except Exception as exc:
-                        logger.info("yt-dlp publish date failed | video_id=%s | reason=%s", video_id, exc)
+                        published_at = datetime.fromisoformat(
+                            published_str.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        continue
 
-                # With newest-first ordering, once we cross the cutoff we can stop this feed.
-                if publish_dt is not None and publish_dt < cutoff:
+                    if published_at < cutoff:
+                        reached_cutoff = True
+                        break
+
+                    channel_video_ids.append(video_id)
+                    channel_items.append({
+                        "video_id": video_id,
+                        "title": snippet.get("title", ""),
+                        "description": (snippet.get("description") or "")[:500],
+                        "published_at": published_at,
+                    })
+
+                page_token = data.get("nextPageToken")
+                if not page_token:
                     break
 
-                # If we can't determine publish time, keep scanning (don't break),
-                # but also don't include it in the last-month output.
-                if publish_dt is None:
-                    continue
+            video_details = _fetch_video_details(
+                channel_video_ids, api_key, client
+            )
 
-                record = {
+            for item in channel_items:
+                vid = item["video_id"]
+                details = video_details.get(vid, {})
+                records.append({
                     "channel_url": channel_url,
-                    "channel_name": channel_url_to_name(channel_url),
-                    "video_id": str(video_id),
-                    "video_title": title,
-                    "description_snippet": description,
-                    "content_type": content_type,
-                    "video_length": {"seconds": parse_duration_seconds(length_text)},
-                    "view_count": {"value": parse_view_count(view_count_text)},
-                    "video_publish_date": publish_dt.date().isoformat(),
+                    "channel_name": channel_name,
+                    "video_id": vid,
+                    "video_title": item["title"],
+                    "description_snippet": item["description"],
+                    "content_type": details.get("content_type", "videos"),
+                    "video_length": {"seconds": details.get("duration_seconds")},
+                    "view_count": {"value": details.get("view_count")},
+                    "video_publish_date": item["published_at"].date().isoformat(),
                     "fetch_date_utc": fetched_at_utc,
-                }
-                records.append(record)
-                kept += 1
+                })
 
             logger.info(
-                "Scrape channel done | channel=%s | content_type=%s | scraped=%d | kept=%d",
+                "YT API scrape done | channel=%s | found=%d",
                 channel_url,
-                content_type,
-                scraped,
-                kept,
+                len(channel_items),
             )
 
     return records

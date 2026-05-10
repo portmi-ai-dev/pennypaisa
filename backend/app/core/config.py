@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # Groq (optional — fast inference fallback / future use)
     groq_api_key: str | None = Field(None, description="Groq API key")
 
+    # YouTube Data API v3
+    YOUTUBE_API_KEY: str | None = Field(None, description="YouTube Data API v3 key")
+
     # ── Worker timeouts (arq + per-video) ────────────────────────────────
     # Whole-job ceiling. Backfill jobs can legitimately churn through dozens
     # of videos sequentially, so we cap them at 1h by default. Tune up if
@@ -53,12 +56,11 @@ class Settings(BaseSettings):
         60 * 8,
         description="Max wall-clock seconds spent on a single video's transcript attempt.",
     )
-    # Per-channel budget for the scrape stage. scrapetube iterates a channel
-    # across videos/shorts/streams content types; a single blocked network
-    # request can stall the entire scrape. Default 5 min per channel is
-    # generous for a typical 30-day window (usually <200 video IDs).
+    # Per-channel budget for the scrape stage. Each channel is scraped via
+    # the YouTube Data API v3 uploads playlist + video details batch call.
+    # Default 2 min per channel is generous for a typical 30-day window.
     YT_SCRAPE_PER_CHANNEL_TIMEOUT_SECONDS: int = Field(
-        60 * 5,
+        60 * 2,
         description="Max wall-clock seconds spent scraping one channel's video IDs.",
     )
 

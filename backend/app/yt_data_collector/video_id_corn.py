@@ -390,17 +390,9 @@ async def scrape_video_ids_only(
     """Stage 1: scrape recent video IDs into ``video_ids`` only.
 
     Does NOT fetch transcripts — that's stage 2 (``transcribe_missing``).
-    Splitting lets the caller decide when to spend the much-more-expensive
-    transcript fetch budget separately from the cheap ID scrape.
-
-    Each channel is scraped independently under ``YT_SCRAPE_PER_CHANNEL_TIMEOUT_SECONDS``
-    so a single hung scrapetube generator can't stall the entire job. The
-    underlying ``to_thread`` cannot be cancelled mid-call (Python threads are
-    not killable), but the coroutine returns control immediately on timeout and
-    the loop moves on to the next channel.
-
-    Returns counts: ``processed_ids``, ``inserted_ids``, ``insert_failed``,
-    ``channels_timed_out``.
+    Each channel is scraped independently under
+    ``YT_SCRAPE_PER_CHANNEL_TIMEOUT_SECONDS`` via the YouTube Data API v3
+    uploads playlist so a single hung request can't stall the entire job.
     """
     from app.core.config import settings as _settings
 
@@ -410,6 +402,7 @@ async def scrape_video_ids_only(
 
     all_records: list[dict[str, Any]] = []
     channels_timed_out = 0
+    channels_failed = 0
 
     for channel_url in channel_urls:
         try:
@@ -430,6 +423,7 @@ async def scrape_video_ids_only(
                 channel_url,
             )
         except Exception as exc:
+            channels_failed += 1
             logger.warning(
                 "yt scrape: channel failed | channel=%s | reason=%s",
                 channel_url,
@@ -437,12 +431,18 @@ async def scrape_video_ids_only(
             )
 
     if not all_records:
-        logger.info("yt scrape: no records returned (channels_timed_out=%d)", channels_timed_out)
+        log = logger.error if channels_failed == 0 and channels_timed_out == 0 else logger.warning
+        log(
+            "yt scrape: ZERO video IDs across all channels (channels_timed_out=%d, channels_failed=%d)",
+            channels_timed_out,
+            channels_failed,
+        )
         return {
             "processed_ids": 0,
             "inserted_ids": 0,
             "insert_failed": 0,
             "channels_timed_out": channels_timed_out,
+            "channels_failed": channels_failed,
         }
 
     inserted = 0
@@ -458,17 +458,19 @@ async def scrape_video_ids_only(
             inserted += 1
 
     logger.info(
-        "yt scrape: ids processed=%d | inserted=%d | failed=%d | channels_timed_out=%d",
+        "yt scrape: ids processed=%d | inserted=%d | failed=%d | channels_timed_out=%d | channels_failed=%d",
         len(all_records),
         inserted,
         insert_failed,
         channels_timed_out,
+        channels_failed,
     )
     return {
         "processed_ids": len(all_records),
         "inserted_ids": inserted,
         "insert_failed": insert_failed,
         "channels_timed_out": channels_timed_out,
+        "channels_failed": channels_failed,
     }
 
 

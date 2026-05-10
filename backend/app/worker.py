@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from arq.connections import RedisSettings
@@ -82,21 +83,32 @@ async def transcript_job(ctx: dict[str, Any], video_url: str) -> dict[str, Any]:
     }
 
 
-async def backfill_scrape_job(ctx: dict[str, Any], days: int = 10) -> dict[str, int]:
+async def backfill_scrape_job(ctx: dict[str, Any], days: int = 10) -> dict[str, Any]:
     """Scrape recent video IDs only (no transcripts) from configured channels.
 
     Stage 1 of the split-backfill flow. Cheap call relative to transcript
     fetching — separates "what's new on the channels" from "fetch the
     expensive transcripts" so the latter can be scheduled independently.
-
-    Each channel is processed under ``YT_SCRAPE_PER_CHANNEL_TIMEOUT_SECONDS``
-    (default 5 min) so a single hung scrapetube generator can't stall the
-    whole job. Timed-out channels are skipped and counted in the result.
     """
-    return await scrape_video_ids_only(
-        channel_urls=load_channel_urls(),
+    channel_urls = load_channel_urls()
+    started_at = datetime.now(timezone.utc)
+
+    counts = await scrape_video_ids_only(
+        channel_urls=channel_urls,
         max_age_days=days,
     )
+
+    completed_at = datetime.now(timezone.utc)
+    duration = (completed_at - started_at).total_seconds()
+
+    return {
+        **counts,
+        "days_window": days,
+        "channels": list(channel_urls),
+        "started_at": started_at.isoformat().replace("+00:00", "Z"),
+        "completed_at": completed_at.isoformat().replace("+00:00", "Z"),
+        "duration_seconds": round(duration, 2),
+    }
 
 
 async def backfill_transcript_job(ctx: dict[str, Any], days: int = 10) -> dict[str, int]:
@@ -121,7 +133,7 @@ async def yt_hourly_cron(ctx: dict[str, Any]) -> None:
     """Hourly: scrape new video IDs + transcribe missing transcripts."""
     try:
         await sync_latest_video_ids_and_transcripts(
-            channel_urls=resolve_channel_urls_from_env()
+            channel_urls=load_channel_urls()
         )
     except Exception as exc:
         logger.warning("yt cron tick failed: %s", exc)
