@@ -73,7 +73,7 @@ async def generate_and_cache(
             result.sentiment,
             prompt=prompt,
             raw_response=result.raw_text,
-            model="openai/gpt-oss-20b",
+            model="llama-3.3-70b-versatile",
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
             total_tokens=result.total_tokens,

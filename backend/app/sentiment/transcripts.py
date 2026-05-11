@@ -41,7 +41,7 @@ async def fetch_recent_transcripts(
         WITH ranked AS (
             SELECT
                 t.channel_url,
-                v.channel_name,
+                COALESCE(t.channel_name, v.channel_name) AS channel_name,
                 t.video_title,
                 t.video_publish_date,
                 t.clean_transcript,

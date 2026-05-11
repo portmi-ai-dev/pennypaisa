@@ -49,13 +49,14 @@ async def _refresh_one(http_client, asset: Asset) -> None:
 
 
 async def _refresh_all(http_client) -> None:
-    """Refresh all assets in parallel — each holds its own lock."""
+    """Refresh all assets sequentially to respect Groq TPM limits."""
     # Clear transcript cache so each hourly cycle fetches fresh transcripts
     clear_transcript_cache()
-    await asyncio.gather(
-        *(_refresh_one(http_client, asset) for asset in get_args(Asset)),
-        return_exceptions=True,
-    )
+    for asset in get_args(Asset):
+        try:
+            await _refresh_one(http_client, asset)
+        except Exception as exc:
+            logger.warning("cron refresh error (%s): %s", asset, exc)
 
 
 async def run_refresher(http_client) -> None:

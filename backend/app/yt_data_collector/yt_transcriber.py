@@ -1,7 +1,13 @@
-"""YouTube transcript resolver (URL -> transcript text/segments)."""
+"""YouTube transcript resolver (URL -> transcript text/segments).
+
+Supports residential proxy rotation and cookie-based auth to
+avoid YouTube IP blocks on cloud servers.
+"""
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 import shutil
 import tempfile
@@ -21,7 +27,83 @@ from yt_dlp import YoutubeDL
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 ASSEMBLYAI_BASE_URL = "https://api.assemblyai.com"
+
+
+# ---------------------------------------------------------------------------
+# Proxy + cookie helpers
+# ---------------------------------------------------------------------------
+
+def _get_proxy_url() -> str | None:
+    """Return raw proxy URL from settings, or None."""
+    url = (settings.YT_PROXY_URL or "").strip()
+    return url or None
+
+
+def _get_yt_dlp_proxy() -> str | None:
+    """Return proxy URL string for yt-dlp, or None."""
+    return _get_proxy_url()
+
+
+def _get_cookies_file() -> str | None:
+    """Return validated cookies file path, or None."""
+    path = (settings.YT_COOKIES_FILE or "").strip()
+    if path and os.path.isfile(path):
+        return path
+    if path:
+        logger.warning("YT_COOKIES_FILE set but file not found: %s", path)
+    return None
+
+
+def _build_transcript_api() -> YouTubeTranscriptApi:
+    """Build YouTubeTranscriptApi instance with proxy_config if configured.
+
+    Priority:
+    1. Webshare rotating residential proxy (first-class library support)
+    2. Generic proxy URL (any HTTP/HTTPS/SOCKS proxy)
+    3. No proxy (direct connection — fine for dev, blocked on cloud)
+    """
+    # 1. Webshare (recommended for production)
+    ws_user = (settings.YT_WEBSHARE_PROXY_USERNAME or "").strip()
+    ws_pass = (settings.YT_WEBSHARE_PROXY_PASSWORD or "").strip()
+    if ws_user and ws_pass:
+        try:
+            from youtube_transcript_api.proxies import WebshareProxyConfig
+            proxy_config = WebshareProxyConfig(
+                proxy_username=ws_user,
+                proxy_password=ws_pass,
+            )
+            logger.debug("YouTubeTranscriptApi using Webshare rotating proxy")
+            return YouTubeTranscriptApi(proxy_config=proxy_config)
+        except ImportError:
+            logger.warning(
+                "WebshareProxyConfig not available — upgrade youtube-transcript-api >= 0.6.3"
+            )
+        except Exception as exc:
+            logger.warning("Failed to configure Webshare proxy: %s", exc)
+
+    # 2. Generic proxy URL
+    proxy_url = _get_proxy_url()
+    if proxy_url:
+        try:
+            from youtube_transcript_api.proxies import GenericProxyConfig
+            proxy_config = GenericProxyConfig(
+                http_url=proxy_url,
+                https_url=proxy_url,
+            )
+            logger.debug("YouTubeTranscriptApi using generic proxy")
+            return YouTubeTranscriptApi(proxy_config=proxy_config)
+        except ImportError:
+            logger.warning(
+                "GenericProxyConfig not available — upgrade youtube-transcript-api >= 0.6.3"
+            )
+        except Exception as exc:
+            logger.warning("Failed to configure generic transcript proxy: %s", exc)
+
+    # 3. No proxy
+    return YouTubeTranscriptApi()
 
 
 @dataclass(slots=True)
@@ -99,9 +181,13 @@ def _resolve_js_runtimes() -> dict[str, dict[str, str]] | None:
 
 
 def _fetch_youtube_transcript(video_id: str) -> list[Any]:
-    api = YouTubeTranscriptApi()
+    api = _build_transcript_api()
+
+    # Modern .fetch() (v0.6+) — proxy already baked into api instance
     if hasattr(api, "fetch"):
         return api.fetch(video_id)
+
+    # Legacy class-method API (no proxy support in old versions)
     if hasattr(YouTubeTranscriptApi, "get_transcript"):
         return YouTubeTranscriptApi.get_transcript(video_id)
 
@@ -118,7 +204,7 @@ def _fetch_youtube_transcript(video_id: str) -> list[Any]:
 
 def _download_audio_to_temp(video_url: str, output_dir: str) -> str:
     output_template = f"{output_dir}/audio.%(ext)s"
-    options = {
+    options: dict[str, Any] = {
         "format": "bestaudio/best",
         "outtmpl": output_template,
         "quiet": True,
@@ -131,6 +217,16 @@ def _download_audio_to_temp(video_url: str, output_dir: str) -> str:
             }
         ],
     }
+
+    # Proxy support
+    proxy = _get_yt_dlp_proxy()
+    if proxy:
+        options["proxy"] = proxy
+
+    # Cookie support — avoids "Sign in to confirm you're not a bot"
+    cookies_file = _get_cookies_file()
+    if cookies_file:
+        options["cookiefile"] = cookies_file
 
     js_runtimes = _resolve_js_runtimes()
     if js_runtimes:

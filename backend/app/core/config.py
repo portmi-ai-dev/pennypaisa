@@ -47,6 +47,33 @@ class Settings(BaseSettings):
         None, description="Optional path to yt-dlp JS runtime executable"
     )
 
+    # ── Proxy & anti-block settings ────────────────────────────────────
+    # Option A: Generic proxy URL for YouTube requests. Format:
+    #   http://user:pass@host:port  or  socks5://user:pass@host:port
+    # Leave empty in dev to use direct connection.
+    YT_PROXY_URL: str | None = Field(
+        None, description="Residential proxy URL for YouTube transcript/audio requests"
+    )
+    # Option B: Webshare rotating residential proxy (first-class youtube-transcript-api support).
+    # If both Webshare creds AND YT_PROXY_URL are set, Webshare is used for transcript API
+    # and YT_PROXY_URL is used for yt-dlp audio downloads.
+    YT_WEBSHARE_PROXY_USERNAME: str | None = Field(
+        None, description="Webshare proxy username (from dashboard.webshare.io)"
+    )
+    YT_WEBSHARE_PROXY_PASSWORD: str | None = Field(
+        None, description="Webshare proxy password"
+    )
+    # Minimum seconds to wait between consecutive transcript fetches.
+    # Prevents burst patterns that trigger IP blocks.
+    YT_TRANSCRIPT_DELAY_SECONDS: float = Field(
+        5.0, description="Delay between transcript fetch attempts (anti-burst)"
+    )
+    # Path to a Netscape-format cookies file exported from a browser.
+    # Helps yt-dlp bypass "Sign in to confirm you're not a bot" blocks.
+    YT_COOKIES_FILE: str | None = Field(
+        None, description="Path to Netscape cookies.txt for yt-dlp"
+    )
+
     # ── Worker timeouts (arq + per-video) ────────────────────────────────
     # Whole-job ceiling. Backfill jobs can legitimately churn through dozens
     # of videos sequentially, so we cap them at 1h by default. Tune up if

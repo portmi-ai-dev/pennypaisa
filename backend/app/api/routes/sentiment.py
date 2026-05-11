@@ -1,13 +1,17 @@
 """Market sentiment API routes."""
 
-import asyncio
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.core.rate_limit import limiter
 from app.sentiment._common import generate_and_cache
-from app.sentiment.aggregator import aggregate_sentiments, current_timestamp, fetch_asset_sentiment
+from app.sentiment.aggregator import (
+    aggregate_sentiments,
+    current_timestamp,
+    fetch_asset_sentiment,
+    regenerate_single_asset,
+)
 from app.models.sentiment import AssetSentiment, IntelSentimentResponse
 from app.services.aggregator import aggregate_prices
 
@@ -84,28 +88,53 @@ async def get_asset_sentiment(
     return sentiment
 
 
-@router.post("/sentiment/regenerate", response_model=IntelSentimentResponse)
+@router.post("/sentiment/regenerate/{asset}", response_model=AssetSentiment)
 @limiter.limit("5/minute")
-async def regenerate_sentiment(request: Request) -> IntelSentimentResponse:
-    """Force-regenerate sentiment for all assets — bypasses cache, writes DB + history.
+async def regenerate_asset_sentiment(
+    asset: Asset,
+    request: Request,
+) -> AssetSentiment:
+    """Force-regenerate sentiment for a single asset. Bypasses cache."""
+    normalized = _ASSET_ALIASES.get(asset.lower())
+    if normalized is None:
+        raise HTTPException(status_code=404, detail=f"Unknown asset '{asset}'")
 
-    Calls Groq for crypto, gold, and silver in parallel, persists results,
-    then returns the freshly generated data. Never returns cached data.
-    """
     try:
-        prices = await aggregate_prices(request.app.state.http_client)
-        crypto, gold, silver = await asyncio.gather(
-            generate_and_cache("crypto", prices),
-            generate_and_cache("gold", prices),
-            generate_and_cache("silver", prices),
+        sentiment = await regenerate_single_asset(
+            request.app.state.http_client, normalized
         )
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail={
-                "error": "Sentiment regeneration failed",
-                "message": str(exc),
-            },
+            detail={"error": "Sentiment regeneration failed", "asset": normalized, "message": str(exc)},
+        ) from exc
+
+    if sentiment is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Sentiment regeneration failed", "asset": normalized, "message": "Model returned no usable response."},
+        )
+    return sentiment
+
+
+@router.post("/sentiment/regenerate", response_model=IntelSentimentResponse)
+@limiter.limit("3/minute")
+async def regenerate_sentiment(request: Request) -> IntelSentimentResponse:
+    """Force-regenerate sentiment for all assets — sequential to respect TPM.
+
+    Calls Groq for crypto, gold, and silver one at a time, persists results,
+    then returns the freshly generated data. Never returns cached data.
+    """
+    try:
+        prices = await aggregate_prices(request.app.state.http_client)
+        # Sequential — avoids 429 TPM burst from parallel Groq calls
+        crypto = await generate_and_cache("crypto", prices)
+        gold = await generate_and_cache("gold", prices)
+        silver = await generate_and_cache("silver", prices)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Sentiment regeneration failed", "message": str(exc)},
         ) from exc
 
     return IntelSentimentResponse(
@@ -135,7 +164,13 @@ async def get_asset_sentiment_legacy(
     return await get_asset_sentiment(asset, request, refresh)
 
 
-@router.post("/intel/sentiment/regenerate", response_model=IntelSentimentResponse, include_in_schema=False)
+@router.post("/intel/sentiment/regenerate/{asset}", response_model=AssetSentiment, include_in_schema=False)
 @limiter.limit("5/minute")
+async def regenerate_asset_sentiment_legacy(asset: Asset, request: Request) -> AssetSentiment:
+    return await regenerate_asset_sentiment(asset, request)
+
+
+@router.post("/intel/sentiment/regenerate", response_model=IntelSentimentResponse, include_in_schema=False)
+@limiter.limit("3/minute")
 async def regenerate_sentiment_legacy(request: Request) -> IntelSentimentResponse:
     return await regenerate_sentiment(request)

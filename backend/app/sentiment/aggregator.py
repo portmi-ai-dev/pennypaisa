@@ -1,15 +1,14 @@
-"""Aggregate Gemini-generated sentiment across assets."""
+"""Aggregate sentiment across assets — sequential to respect Groq TPM."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Literal
 
 import httpx
 
-from app.sentiment._common import get_or_swr
+from app.sentiment._common import generate_and_cache, get_or_swr
 from app.sentiment.btc import fetch_crypto_sentiment
 from app.sentiment.gold import fetch_gold_sentiment
 from app.sentiment.silver import fetch_silver_sentiment
@@ -34,22 +33,22 @@ def current_timestamp() -> str:
 async def aggregate_sentiments(client: httpx.AsyncClient) -> IntelSentimentResponse:
     """Fetch live prices once, then sentiment for crypto, gold, and silver.
 
-    Sentiment fetches run in parallel and each honours the Postgres cache,
-    so frequent calls from the frontend are cheap.
+    Cache reads are parallel-safe (just DB lookups). Only cold-miss paths
+    hit Groq, and those go through generate_and_cache which has 429 retry.
     """
     prices = await aggregate_prices(client)
     logger.info(
-        "Intel price snapshot — gold=%s silver=%s btc=%s",
+        "Sentiment price snapshot — gold=%s silver=%s btc=%s",
         prices.get("gold"),
         prices.get("silver"),
         prices.get("btc"),
     )
 
-    crypto, gold, silver = await asyncio.gather(
-        fetch_crypto_sentiment(prices),
-        fetch_gold_sentiment(prices),
-        fetch_silver_sentiment(prices),
-    )
+    # Sequential: each fetcher checks cache first (instant), only cold-miss
+    # hits Groq. Sequential avoids TPM burst on simultaneous cold misses.
+    crypto = await fetch_crypto_sentiment(prices)
+    gold = await fetch_gold_sentiment(prices)
+    silver = await fetch_silver_sentiment(prices)
 
     return IntelSentimentResponse(
         crypto=crypto,
@@ -65,19 +64,21 @@ async def fetch_asset_sentiment(
     *,
     force_refresh: bool = False,
 ) -> AssetSentiment | None:
-    """Fetch sentiment for a single asset — used by the hover endpoint.
-
-    Only aggregates price data if we can't serve from cache, so a cache hit
-    is near-instant and safe to call on every hover.
-    """
+    """Fetch sentiment for a single asset."""
     if not force_refresh:
-        # get_or_swr unpacks the (sentiment, is_stale) tuple cache.get_cached
-        # returns and schedules a background refresh when the row is stale.
         cached = await get_or_swr(asset, prices=None)
         if cached is not None:
             return cached
 
-    # Cache miss (or forced refresh) — fetch fresh prices and regenerate.
     prices = await aggregate_prices(client)
     fetcher = _FETCHERS[asset]
     return await fetcher(prices=prices, use_cache=False)
+
+
+async def regenerate_single_asset(
+    client: httpx.AsyncClient,
+    asset: Asset,
+) -> AssetSentiment | None:
+    """Force-regenerate a single asset — bypasses cache, writes fresh."""
+    prices = await aggregate_prices(client)
+    return await generate_and_cache(asset, prices)

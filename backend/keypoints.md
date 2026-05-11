@@ -1,108 +1,94 @@
-# Backend Key Points
 
-Quick reference for the intel sentiment pipeline. Read this first before
-poking at `app/intel/`.
 
-## Pipeline (high level)
+## Sentiment Generation Pipeline — Full Map
+
+### 1. SCHEDULING
+
+| Trigger | Where | Cadence |
+|---------|-------|---------|
+| **Cron (primary)** | `refresher.py → run_refresher()` | Every **60 min**, started from `lifespan.py` on app boot. 30s initial delay. |
+| **SWR (safety net)** | `_common.py → _refresh_in_background()` | On-demand when user reads stale cache (expired but within +1hr SWR window) |
+| **Manual force** | `POST /api/sentiment/regenerate` | User-triggered, bypasses cache entirely |
+| **Single asset** | `GET /api/sentiment/{asset}?refresh=true` | User-triggered per asset |
+
+### 2. FLOW (for one generation cycle)
 
 ```
-Frontend hover ─► /api/intel/sentiment[/{asset}] ─► Postgres cache (1h TTL)
-                                                         │
-                                  fresh hit ◄────────────┤
-                                  stale hit ◄────────────┤  (background refresh)
-                                  miss     ─► Gemini ─► Postgres (cache + history)
+run_refresher()                          ← hourly cron
+  └─ _refresh_all()
+       ├─ clear_transcript_cache()       ← reset so fresh transcripts fetched
+       └─ _refresh_one(asset) × 3        ← gold, silver, crypto IN PARALLEL
+            ├─ pg_try_advisory_lock()     ← dedup across workers
+            ├─ aggregate_prices(client)   ← live price fetch
+            └─ generate_and_cache(asset, prices)
+                 ├─ _get_transcript_block()
+                 │    └─ fetch_recent_transcripts()   ← SQL: last 2/channel from video_transcripts
+                 │    └─ format_transcripts_for_prompt()  ← truncate to 4000 chars total
+                 ├─ build_prompt(asset, prices, transcript_block)
+                 │    ├─ Analysis frame (gold/silver/crypto specific)
+                 │    ├─ DATE: today
+                 │    ├─ LIVE PRICE SNAPSHOT (from aggregator)
+                 │    ├─ TRANSCRIPT BLOCK (YouTube analyst commentary)
+                 │    └─ Schema spec (JSON output format)
+                 ├─ generate_sentiment(prompt)
+                 │    └─ Groq API call: openai/gpt-oss-20b
+                 │         ├─ strict JSON schema response_format
+                 │         └─ max_tokens=4096
+                 └─ cache.set_cached()
+                      ├─ UPSERT intel_sentiment_cache (1 row/asset)
+                      └─ INSERT intel_sentiment_history (audit log)
 ```
 
-## Tables (Neon Postgres)
+### 3. INPUTS to the model
 
-- **`intel_sentiment_cache`** — 1 row per asset. UPSERTed on write.
-  Columns: `asset PK, response JSONB, expires_at, updated_at`.
-- **`intel_sentiment_history`** — append-only Gemini call log for
-  analytics / fine-tuning. Columns include `prompt`, `response`,
-  `raw_response`, `model`, `prompt_tokens`, `completion_tokens`,
-  `total_tokens`, `generated_at`.
+Per asset, the prompt contains:
 
-DDL lives in `app/intel/schema.py` and runs on startup.
+| Section | Source | Example |
+|---------|--------|---------|
+| **Analysis frame** | Hardcoded in `prompts.py` | "You are a precious-metals desk analyst... Weigh: Macro, DXY, real yields..." |
+| **Date** | `datetime.now()` | "DATE: May 11, 2026" |
+| **Live prices** | `aggregate_prices()` → Binance, CoinGecko, CoinLore, GoldAPI, Kitco | "LIVE BITCOIN SNAPSHOT — Spot $103,500 \| 24h +1.85% \| Dominance 52.5%" |
+| **Transcripts** | `video_transcripts` DB → last 2/channel | "[Benjamin Cowen] Labor Market... (2026-05-08)\n{first 1000 chars}" |
+| **Schema spec** | Hardcoded | "Respond with pure JSON: marketType, confidence, horizon, reasoning, analystView" |
 
-## Cache lifecycle
+### 4. OUTPUT schema
 
-- `TTL_SECONDS = 1h` — fresh window.
-- `STALE_TTL_SECONDS = 1h` — stale-while-revalidate window. Expired rows
-  are still served while a background task regenerates.
-- Cron worker (`app/intel/refresher.py`) refreshes every 1h, so under
-  healthy operation users always see a fresh hit.
-
-## Single-flight (no Gemini stampede)
-
-Both the SWR refresh and the cron use Postgres `pg_try_advisory_lock`
-keyed per-asset. If another worker is already refreshing, others skip.
-Implemented in `cache.try_acquire_refresh_lock` / `release_refresh_lock`.
-
-## Where things live
-
-| File | Responsibility |
-|---|---|
-| `app/intel/cache.py` | Cache reads (with SWR flag), UPSERT + history insert, advisory lock helpers. |
-| `app/intel/schema.py` | DDL, runs on startup. |
-| `app/intel/_common.py` | Shared cache→Gemini orchestration (`get_or_swr`, `generate_and_cache`, background refresh). |
-| `app/intel/refresher.py` | Hourly cron worker — proactively refreshes all assets. |
-| `app/intel/utils.py` | Gemini call. Returns `GenerationResult` with sentiment + raw text + token counts. |
-| `app/intel/gold.py` / `silver.py` / `btc.py` | Thin per-asset wrappers around `_common`. |
-| `app/intel/aggregator.py` | Aggregate endpoint logic + `fetch_asset_sentiment`. |
-| `app/intel/prompts.py` | Persona + schema prompt builders. |
-| `app/core/database.py` | asyncpg pool: `min_size=5, max_size=30, command_timeout=10`. |
-| `app/core/rate_limit.py` | slowapi limiter (per-IP). |
-| `app/core/lifespan.py` | Connects DB, ensures schema, starts the hourly refresher. |
-
-## Rate limits (per IP)
-
-- `GET /api/intel/sentiment` → **30/min**
-- `GET /api/intel/sentiment/{asset}` → **60/min**
-
-slowapi is in-process per worker. Fine for abuse protection; for strict
-global limits, swap the storage backend.
-
-## Why the hover feels instant
-
-Speed comes from the **frontend**, not the cache:
-
-1. App mount → `/api/intel/sentiment` populates React state for all 3 assets.
-2. Hover panel renders from props — no fetch awaited.
-3. `fetchSentimentFor()` has a 10-min in-memory throttle → most hovers
-   issue zero HTTP traffic.
-4. localStorage holds the aggregate for 10 min across reloads.
-
-Backend cache is the safety net for cold paths and Gemini quota, not
-the source of UX speed.
-
-## Adding a new asset
-
-1. Add the literal to `Asset = Literal[...]` in `cache.py`, `_common.py`,
-   `aggregator.py`, and the route's `_ASSET_ALIASES`.
-2. Create `app/intel/<asset>.py` mirroring `gold.py`.
-3. Register in `aggregator._FETCHERS`.
-4. Add a frame in `prompts.py`.
-
-## Useful queries
-
-```sql
--- Current cache state
-SELECT asset, expires_at, updated_at FROM intel_sentiment_cache;
-
--- Recent history with token usage
-SELECT asset, generated_at, prompt_tokens, completion_tokens, total_tokens
-FROM intel_sentiment_history
-ORDER BY generated_at DESC LIMIT 20;
-
--- Daily token spend
-SELECT date_trunc('day', generated_at) AS day,
-       SUM(total_tokens) AS tokens
-FROM intel_sentiment_history
-GROUP BY 1 ORDER BY 1 DESC;
+```json
+{
+  "marketType": "bull | bear | neutral",
+  "confidence": "low | medium | high",
+  "horizon": "short-term | medium-term | long-term",
+  "reasoning": "<=35 words",
+  "analystView": "<=55 words"
+}
 ```
 
-## Times stored as UTC
+Post-processing in `_parse_sentiment()`: `reasoning` trimmed to 35 words, `analystView` to 55 words.
 
-`TIMESTAMPTZ` columns are UTC; Neon SQL editor displays them as `+00`.
-Nepal time = UTC + 5:45. Convert at the display layer:
-`SELECT updated_at AT TIME ZONE 'Asia/Kathmandu' FROM intel_sentiment_cache;`
+### 5. MODEL + LIMITS
+
+- **Model**: `openai/gpt-oss-20b` on Groq
+- **TPM limit**: 8000 tokens (free tier)
+- **3 calls per cycle** (gold + silver + crypto in parallel) → can hit TPM if prompts large
+- Transcript block capped at 4000 chars (~1000 tokens) to stay under
+
+### 6. CACHING
+
+| Layer | TTL | Purpose |
+|-------|-----|---------|
+| `intel_sentiment_cache` | 1 hour | Primary read path |
+| SWR window | +1 hour after expiry | Serve stale while regenerating |
+| Advisory lock | Per-asset | Dedup parallel workers |
+| Transcript in-memory cache | Cleared each refresh cycle | Avoid 3x DB hit per cycle |
+
+---
+
+**Key observations for refinement:**
+
+1. `reasoning` capped at 35 words, `analystView` at 55 words — very tight. May want to increase.
+2. Model is `openai/gpt-oss-20b` — relatively small. Could upgrade if Groq tier allows.
+3. 8000 TPM limit is tight with transcripts. Calls go sequential if parallel 3 all hit within same minute.
+4. Price aggregator has hardcoded fallback prices (gold $4646, BTC $65000) — stale if APIs fail. No weekly change data for gold/silver (only 24h).
+5. No error reporting to frontend when sentiment generation fails silently — just missing data.
+
+What you want to refine?
