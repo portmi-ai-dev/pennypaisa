@@ -9,6 +9,7 @@ A production-ready FastAPI backend for real-time financial data, AI chat, and pr
 ### Prerequisites
 - Python 3.11+
 - Virtual environment (recommended)
+- JavaScript runtime for yt-dlp (Node.js recommended)
 - API keys for:
   - Google Gemini API (from [AI Studio](https://aistudio.google.com))
   - Redis Cloud (optional but recommended)

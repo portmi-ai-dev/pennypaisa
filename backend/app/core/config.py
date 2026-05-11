@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     # YouTube Data API v3
     YOUTUBE_API_KEY: str | None = Field(None, description="YouTube Data API v3 key")
 
+    # yt-dlp JavaScript runtime
+    YT_DLP_JS_RUNTIME: str | None = Field(
+        None, description="yt-dlp JS runtime: node|bun|deno|quickjs"
+    )
+    YT_DLP_JS_RUNTIME_PATH: str | None = Field(
+        None, description="Optional path to yt-dlp JS runtime executable"
+    )
+
     # ── Worker timeouts (arq + per-video) ────────────────────────────────
     # Whole-job ceiling. Backfill jobs can legitimately churn through dozens
     # of videos sequentially, so we cap them at 1h by default. Tune up if

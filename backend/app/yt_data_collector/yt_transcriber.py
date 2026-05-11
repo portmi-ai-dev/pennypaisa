@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import tempfile
 import time
 from dataclasses import dataclass
@@ -55,8 +56,46 @@ def _is_valid_transcript(entries: list[Any]) -> bool:
     return bool(re.search(r"[A-Za-z0-9]", combined_text))
 
 
+def _is_upcoming_live_reason(reason: str) -> bool:
+    lowered = (reason or "").lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "live event will begin",
+            "will begin in",
+            "is upcoming",
+            "upcoming live",
+            "premiere",
+            "scheduled to begin",
+        )
+    )
+
+
 def _entries_to_text(entries: list[Any]) -> str:
     return " ".join(str(_extract_entry_value(entry, "text", "")).strip() for entry in entries).strip()
+
+
+def _resolve_js_runtimes() -> dict[str, dict[str, str]] | None:
+    runtime = (settings.YT_DLP_JS_RUNTIME or "").strip().lower()
+    runtime_path = (settings.YT_DLP_JS_RUNTIME_PATH or "").strip()
+    if runtime:
+        config: dict[str, dict[str, str]] = {runtime: {}}
+        if runtime_path:
+            config[runtime]["path"] = runtime_path
+        return config
+
+    for runtime_name, candidates in (
+        ("node", ("node",)),
+        ("bun", ("bun",)),
+        ("deno", ("deno",)),
+        ("quickjs", ("qjs", "quickjs")),
+    ):
+        for candidate in candidates:
+            resolved = shutil.which(candidate)
+            if resolved:
+                return {runtime_name: {"path": resolved}}
+
+    return None
 
 
 def _fetch_youtube_transcript(video_id: str) -> list[Any]:
@@ -92,6 +131,10 @@ def _download_audio_to_temp(video_url: str, output_dir: str) -> str:
             }
         ],
     }
+
+    js_runtimes = _resolve_js_runtimes()
+    if js_runtimes:
+        options["js_runtimes"] = js_runtimes
 
     with YoutubeDL(options) as ydl:
         info = ydl.extract_info(video_url, download=True)
@@ -169,6 +212,7 @@ def get_transcript_for_url(video_url: str) -> TranscriptResult:
     if not video_id:
         raise ValueError("Invalid YouTube URL")
 
+    upcoming = False
     try:
         entries = _fetch_youtube_transcript(video_id)
         if entries and _is_valid_transcript(entries):
@@ -177,8 +221,17 @@ def get_transcript_for_url(video_url: str) -> TranscriptResult:
                 source="youtube",
                 text=_entries_to_text(entries),
             )
-    except (TranscriptsDisabled, NoTranscriptFound, CouldNotRetrieveTranscript):
-        pass
+    except (TranscriptsDisabled, NoTranscriptFound, CouldNotRetrieveTranscript) as exc:
+        if _is_upcoming_live_reason(str(exc)):
+            upcoming = True
+    except Exception as exc:
+        if _is_upcoming_live_reason(str(exc)):
+            upcoming = True
+        else:
+            raise
+
+    if upcoming:
+        raise RuntimeError("Transcript unavailable for upcoming live stream")
 
     if (settings.assemblyai_api_key or "").strip():
         transcript = _transcribe_video_audio_with_assemblyai(video_url)

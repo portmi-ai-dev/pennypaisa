@@ -540,6 +540,7 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
     # (``yt_transcriber`` itself imports from ``app.core.config``).
     from app.core.config import settings as _settings
     from app.yt_data_collector.yt_transcriber import (
+        _is_upcoming_live_reason,
         _transcribe_video_audio_with_assemblyai,
     )
 
@@ -612,6 +613,15 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
             # Hard failure on the YouTube path; we still try AssemblyAI
             # before counting it as a real ``failed``.
             yt_reason = f"unexpected: {exc}"
+
+        if _is_upcoming_live_reason(yt_reason):
+            unavailable += 1
+            logger.info(
+                "yt transcript unavailable | video_id=%s | yt=%s | assemblyai=skipped (upcoming)",
+                video_id,
+                yt_reason,
+            )
+            continue
 
         # ── 2. AssemblyAI fallback ───────────────────────────────────
         if not assemblyai_enabled:
