@@ -24,13 +24,6 @@ export default defineConfig(({mode}) => {
           target: 'http://127.0.0.1:8000',
           changeOrigin: true,
         },
-        // Chat endpoint is mounted at /chat (no /api prefix) on the backend.
-        // Without this rule, fetch('/chat/query') hits the Vite dev server,
-        // gets a 404 HTML page, res.json() throws, and the UI shows "Signal lost".
-        '/chat': {
-          target: 'http://127.0.0.1:8000',
-          changeOrigin: true,
-        },
       },
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.

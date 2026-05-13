@@ -102,9 +102,9 @@ Verify service connectivity:
 
 AI-powered chat with real-time web search (grounding enabled by default):
 
-- **`POST /chat/query`** – Query Gemini with optional grounding search
+- **`POST /api/chat/query`** – Query Gemini with optional grounding search
   ```bash
-  curl -X POST http://localhost:8000/chat/query \
+  curl -X POST http://localhost:8000/api/chat/query \
     -H "Content-Type: application/json" \
     -d '{"message": "What is the latest news on AI?"}'
   ```

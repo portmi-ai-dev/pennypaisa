@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Prices } from './marketData';
+import { apiFetch } from './api';
 
 // Lightweight prices hook used by surfaces that only need the header tickers
 // (e.g. the marketing landing). The in-app shell still manages its own
@@ -14,7 +15,7 @@ export function usePrices(): { prices: Prices | null; loading: boolean } {
 
     const fetchPrices = async () => {
       try {
-        const response = await fetch('/api/prices');
+        const response = await apiFetch('/api/prices');
         const ct = response.headers.get('content-type');
         if (!ct || !ct.includes('application/json')) return;
         const data = await response.json();

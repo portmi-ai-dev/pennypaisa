@@ -9,6 +9,7 @@ import {
   type Prices,
   type Sentiments,
 } from '../lib/marketData';
+import { apiFetch } from '../lib/api';
 
 interface CharacterCfg {
   intro: string;
@@ -251,7 +252,7 @@ export const ChatPage: React.FC<Props> = ({ prices, sentiments }) => {
         `Each turn 1-2 sentences. Use real specifics — cycles, ratios, halvings, supply deficits. ` +
         `Make it feel like a sharp, witty exchange — they should react to each other, not lecture in parallel.`;
       try {
-        const res = await fetch('/chat/query', {
+        const res = await apiFetch('/api/chat/query', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: prompt }),
@@ -288,7 +289,7 @@ export const ChatPage: React.FC<Props> = ({ prices, sentiments }) => {
         .filter((m) => m.content !== char.greeting)
         .slice(-6)
         .map((m) => ({ role: m.role, content: m.content }));
-      const res = await fetch('/chat/query', {
+      const res = await apiFetch('/api/chat/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

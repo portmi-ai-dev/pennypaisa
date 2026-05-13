@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { ASSET_CONFIG, assetToBackend, type AssetKey } from '../lib/marketData';
+import { apiFetch } from '../lib/api';
 
 interface Candle {
   time: number;
@@ -50,7 +51,7 @@ export const ChartPage: React.FC<Props> = ({ asset }) => {
       setError(null);
       try {
         const slug = assetToBackend(asset);
-        const res = await fetch(`/api/history/${slug}?interval=${interval}`);
+        const res = await apiFetch(`/api/history/${slug}?interval=${interval}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json: unknown = await res.json();
         if (cancelled) return;
@@ -93,7 +94,7 @@ export const ChartPage: React.FC<Props> = ({ asset }) => {
     let cancelled = false;
     const fetchSnapshot = async () => {
       try {
-        const res = await fetch('/api/prices');
+        const res = await apiFetch('/api/prices');
         const ct = res.headers.get('content-type') || '';
         if (!ct.includes('application/json')) return;
         const data = (await res.json()) as Record<string, number | undefined>;

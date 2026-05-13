@@ -9,6 +9,7 @@ import { CapitalFlowPage } from '../pages/CapitalFlowPage';
 import { ChatPage } from '../pages/ChatPage';
 import { type Prices, type Sentiments } from '../lib/marketData';
 import { PATH_TO_PAGE, type PageId } from '../lib/routes';
+import { apiFetch } from '../lib/api';
 
 class SceneErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -142,7 +143,7 @@ export const AppShell: React.FC = () => {
     }
 
     try {
-      const response = await fetch('/api/intel/sentiment');
+      const response = await apiFetch('/api/intel/sentiment');
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) return;
       const data = await response.json();
@@ -168,7 +169,7 @@ export const AppShell: React.FC = () => {
 
     const slug = asset === 'bitcoin' ? 'crypto' : asset;
     try {
-      const response = await fetch(`/api/intel/sentiment/${slug}`);
+      const response = await apiFetch(`/api/intel/sentiment/${slug}`);
       if (!response.ok) return;
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) return;
@@ -197,7 +198,7 @@ export const AppShell: React.FC = () => {
   useEffect(() => {
     const fetchPrices = async () => {
       try {
-        const response = await fetch('/api/prices');
+        const response = await apiFetch('/api/prices');
         const contentType = response.headers.get('content-type');
         if (!contentType || !contentType.includes('application/json')) return;
         const data = await response.json();
