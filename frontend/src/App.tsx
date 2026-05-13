@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 
 import { AppShell } from './components/AppShell';
-import { MarketingLanding } from './pages/MarketingLanding';
 import { ChartPage } from './pages/ChartPage';
 import { type AssetKey } from './lib/marketData';
 
@@ -26,13 +25,17 @@ export default function App() {
 
   return (
     <Routes>
-      <Route path="/" element={<MarketingLanding />} />
-      <Route path="/app" element={<Navigate to="/app/capflow" replace />} />
-      <Route path="/app/asset" element={<AppShell />} />
-      <Route path="/app/intel" element={<AppShell />} />
-      <Route path="/app/capflow" element={<AppShell />} />
-      <Route path="/app/smart_asset" element={<AppShell />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="/" element={<Navigate to="/capflow" replace />} />
+      <Route path="/asset" element={<AppShell />} />
+      <Route path="/intel" element={<AppShell />} />
+      <Route path="/capflow" element={<AppShell />} />
+      <Route path="/smart_asset" element={<AppShell />} />
+      <Route path="/app" element={<Navigate to="/capflow" replace />} />
+      <Route path="/app/asset" element={<Navigate to="/asset" replace />} />
+      <Route path="/app/intel" element={<Navigate to="/intel" replace />} />
+      <Route path="/app/capflow" element={<Navigate to="/capflow" replace />} />
+      <Route path="/app/smart_asset" element={<Navigate to="/smart_asset" replace />} />
+      <Route path="*" element={<Navigate to="/capflow" replace />} />
     </Routes>
   );
 }

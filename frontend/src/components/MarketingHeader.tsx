@@ -13,10 +13,10 @@ interface NavLink {
 // In-app variant: every product surface as its own pill item. Docs/Pricing
 // are stripped — they live on the public site only.
 const NAV_APP: NavLink[] = [
-  { label: 'Capital Flow', to: '/app/capflow' },
-  { label: 'Intelligence', to: '/app/intel', hasMenu: true },
-  { label: 'Assets', to: '/app/asset' },
-  { label: 'Smart Assets', to: '/app/smart_asset', hasMenu: true },
+  { label: 'Capital Flow', to: '/capflow' },
+  { label: 'Intelligence', to: '/intel', hasMenu: true },
+  { label: 'Assets', to: '/asset' },
+  { label: 'Smart Assets', to: '/smart_asset', hasMenu: true },
 ];
 
 // Marketing variant: the four product surfaces collapse into one "App ▾"
@@ -28,10 +28,10 @@ const NAV_MARKETING_TAIL: NavLink[] = [
 ];
 
 const APP_DROPDOWN_ITEMS: { label: string; to: string; accent: string; tagline: string }[] = [
-  { label: 'Assets', to: '/app/asset', accent: '#d4a843', tagline: '3D bullion terminal' },
-  { label: 'Capital Flow', to: '/app/capflow', accent: '#48c09e', tagline: 'Rotation map' },
-  { label: 'Intelligence', to: '/app/intel', accent: '#4a8fe8', tagline: 'Bull / bear panel' },
-  { label: 'Smart Assets', to: '/app/smart_asset', accent: '#9b72cf', tagline: 'Talk to the assets' },
+  { label: 'Assets', to: '/asset', accent: '#d4a843', tagline: '3D bullion terminal' },
+  { label: 'Capital Flow', to: '/capflow', accent: '#48c09e', tagline: 'Rotation map' },
+  { label: 'Intelligence', to: '/intel', accent: '#4a8fe8', tagline: 'Bull / bear panel' },
+  { label: 'Smart Assets', to: '/smart_asset', accent: '#9b72cf', tagline: 'Talk to the assets' },
 ];
 
 // Per-pill submenu options. Bare pill click → base path (defaults to gold);
@@ -644,7 +644,7 @@ export const MarketingHeader: React.FC<Props> = ({ prices, loading, variant = 'm
           <>
             <button
               type="button"
-              onClick={() => navigate('/app/asset')}
+              onClick={() => navigate('/asset')}
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -670,7 +670,7 @@ export const MarketingHeader: React.FC<Props> = ({ prices, loading, variant = 'm
             </button>
             <button
               type="button"
-              onClick={() => navigate('/app/asset')}
+              onClick={() => navigate('/asset')}
               style={{
                 background: 'linear-gradient(180deg, #d4a843 0%, #b88f2c 100%)',
                 border: '1px solid rgba(212,168,67,0.5)',

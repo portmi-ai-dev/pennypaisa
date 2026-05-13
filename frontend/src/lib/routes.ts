@@ -3,11 +3,11 @@
 // shell never has to do path-string compares mid-render.
 export type PageId = 'landing' | 'intelligence' | 'flow' | 'chat';
 
-// URL → page id. The four product surfaces all live under the /app namespace
-// so additional top-level routes (/login, /pricing, /blog, …) won't collide.
+// URL → page id. The app now lives at the root of app.ourdomain.com, so
+// product surfaces map directly to top-level routes.
 export const PATH_TO_PAGE: Record<string, PageId> = {
-  '/app/asset': 'landing',
-  '/app/intel': 'intelligence',
-  '/app/capflow': 'flow',
-  '/app/smart_asset': 'chat',
+  '/asset': 'landing',
+  '/intel': 'intelligence',
+  '/capflow': 'flow',
+  '/smart_asset': 'chat',
 };
