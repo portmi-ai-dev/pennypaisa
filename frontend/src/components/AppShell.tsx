@@ -3,15 +3,60 @@ import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 
 import { MarketingHeader } from './MarketingHeader';
+import { AssetPage } from '../pages/AssetPage';
 import { IntelligencePage } from '../pages/IntelligencePage';
 import { CapitalFlowPage } from '../pages/CapitalFlowPage';
 import { ChatPage } from '../pages/ChatPage';
-
-const AssetPage = React.lazy(() =>
-  import('../pages/AssetPage').then((m) => ({ default: m.AssetPage }))
-);
 import { type Prices, type Sentiments } from '../lib/marketData';
 import { PATH_TO_PAGE, type PageId } from '../lib/routes';
+
+class SceneErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error) {
+    console.error('[3D Scene error]', error);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            background: '#06060e',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <button
+            onClick={() => this.setState({ error: null })}
+            style={{
+              color: 'rgba(255,255,255,0.5)',
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 4,
+              padding: '10px 20px',
+              cursor: 'pointer',
+              fontFamily: 'DM Sans, sans-serif',
+              fontSize: 11,
+              letterSpacing: '0.2em',
+              textTransform: 'uppercase' as const,
+            }}
+          >
+            Reload Scene
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // Shape returned by /api/intel/sentiment[/asset].
 type Sentiment = {
@@ -243,26 +288,7 @@ export const AppShell: React.FC = () => {
             context is destroyed when the user navigates away, freeing GPU
             resources for other pages. */}
         {page === 'landing' && (
-          <React.Suspense
-            fallback={
-              <div
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  position: 'absolute',
-                  inset: 0,
-                  background: '#06060e',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <div style={{ color: 'rgba(255,255,255,0.3)', fontFamily: 'DM Sans, sans-serif', fontSize: 11, letterSpacing: '0.4em', textTransform: 'uppercase' }}>
-                  Loading Assets…
-                </div>
-              </div>
-            }
-          >
+          <SceneErrorBoundary>
             <div
               style={{
                 width: '100%',
@@ -272,29 +298,29 @@ export const AppShell: React.FC = () => {
               }}
             >
               <AssetPage
-                isLoading={isLoading}
-                isWeekend={isWeekend}
-                prices={prices}
-                goldPrice={goldPrice}
-                silverPrice={silverPrice}
-                btcPrice={btcPrice}
-                goldChangePercent={goldChangePercent}
-                goldWeeklyChangePercent={goldWeeklyChangePercent}
-                silverChangePercent={silverChangePercent}
-                silverWeeklyChangePercent={silverWeeklyChangePercent}
-                btcChangePercent={btcChangePercent}
-                btcWeeklyChangePercent={btcWeeklyChangePercent}
-                btcMarketCap={btcMarketCap}
-                btcDominance={btcDominance}
-                btcVolume24h={btcVolume24h}
-                btcVolumeChangePercent={btcVolumeChangePercent}
-                goldSentiment={goldSentiment}
-                silverSentiment={silverSentiment}
-                bitcoinSentiment={marketSentiment}
-                fetchSentimentFor={handleFetchSentimentFor}
-              />
-            </div>
-          </React.Suspense>
+              isLoading={isLoading}
+              isWeekend={isWeekend}
+              prices={prices}
+              goldPrice={goldPrice}
+              silverPrice={silverPrice}
+              btcPrice={btcPrice}
+              goldChangePercent={goldChangePercent}
+              goldWeeklyChangePercent={goldWeeklyChangePercent}
+              silverChangePercent={silverChangePercent}
+              silverWeeklyChangePercent={silverWeeklyChangePercent}
+              btcChangePercent={btcChangePercent}
+              btcWeeklyChangePercent={btcWeeklyChangePercent}
+              btcMarketCap={btcMarketCap}
+              btcDominance={btcDominance}
+              btcVolume24h={btcVolume24h}
+              btcVolumeChangePercent={btcVolumeChangePercent}
+              goldSentiment={goldSentiment}
+              silverSentiment={silverSentiment}
+              bitcoinSentiment={marketSentiment}
+              fetchSentimentFor={handleFetchSentimentFor}
+            />
+          </div>
+          </SceneErrorBoundary>
         )}
 
         {/* Intelligence — wrapper starts below the floating header so its
