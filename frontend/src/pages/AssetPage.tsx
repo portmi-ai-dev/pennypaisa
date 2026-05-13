@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState, useRef, Suspense } from 'react';
+import { useState, useRef, useEffect, Suspense } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, OrbitControls, ContactShadows } from '@react-three/drei';
 import * as THREE from 'three';
@@ -79,6 +79,14 @@ export const AssetPage: React.FC<AssetPageProps> = ({
   bitcoinSentiment,
   fetchSentimentFor,
 }) => {
+  // ── Tab visibility — pause the render loop when the browser tab is hidden ──
+  const [tabVisible, setTabVisible] = useState(!document.hidden);
+  useEffect(() => {
+    const handler = () => setTabVisible(!document.hidden);
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, []);
+
   // ── Scene-local state (does not need to survive route changes) ──
   const [isMerged, setIsMerged] = useState(false);
   const [morphedGold, setMorphedGold] = useState(false);
@@ -138,9 +146,11 @@ export const AssetPage: React.FC<AssetPageProps> = ({
 
       <div className="absolute inset-0 z-0">
         <Canvas
+          frameloop={tabVisible ? 'always' : 'never'}
           shadows
+          dpr={[1, 1.5]}
           camera={{ position: [0, 2, 18], fov: 45 }}
-          gl={{ antialias: true, toneMapping: 3, localClippingEnabled: true }}
+          gl={{ antialias: true, toneMapping: 3, localClippingEnabled: true, powerPreference: 'high-performance' }}
         >
           <OrbitControls
             makeDefault

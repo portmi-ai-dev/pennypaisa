@@ -3,10 +3,13 @@ import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 
 import { MarketingHeader } from './MarketingHeader';
-import { AssetPage } from '../pages/AssetPage';
 import { IntelligencePage } from '../pages/IntelligencePage';
 import { CapitalFlowPage } from '../pages/CapitalFlowPage';
 import { ChatPage } from '../pages/ChatPage';
+
+const AssetPage = React.lazy(() =>
+  import('../pages/AssetPage').then((m) => ({ default: m.AssetPage }))
+);
 import { type Prices, type Sentiments } from '../lib/marketData';
 import { PATH_TO_PAGE, type PageId } from '../lib/routes';
 
@@ -236,41 +239,63 @@ export const AppShell: React.FC = () => {
       <MarketingHeader prices={prices} loading={isLoading} variant="app" />
 
       <main style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-        {/* Asset (3D bullion scene) — full-bleed so the WebGL canvas paints
-            behind the glass header. Scene stays mounted to preserve the
-            WebGL context across route changes. */}
-        <div
-          style={{
-            display: page === 'landing' ? 'block' : 'none',
-            width: '100%',
-            height: '100%',
-            position: 'absolute',
-            inset: 0,
-          }}
-        >
-          <AssetPage
-            isLoading={isLoading}
-            isWeekend={isWeekend}
-            prices={prices}
-            goldPrice={goldPrice}
-            silverPrice={silverPrice}
-            btcPrice={btcPrice}
-            goldChangePercent={goldChangePercent}
-            goldWeeklyChangePercent={goldWeeklyChangePercent}
-            silverChangePercent={silverChangePercent}
-            silverWeeklyChangePercent={silverWeeklyChangePercent}
-            btcChangePercent={btcChangePercent}
-            btcWeeklyChangePercent={btcWeeklyChangePercent}
-            btcMarketCap={btcMarketCap}
-            btcDominance={btcDominance}
-            btcVolume24h={btcVolume24h}
-            btcVolumeChangePercent={btcVolumeChangePercent}
-            goldSentiment={goldSentiment}
-            silverSentiment={silverSentiment}
-            bitcoinSentiment={marketSentiment}
-            fetchSentimentFor={handleFetchSentimentFor}
-          />
-        </div>
+        {/* Asset (3D bullion scene) — conditionally mounted so the WebGL
+            context is destroyed when the user navigates away, freeing GPU
+            resources for other pages. */}
+        {page === 'landing' && (
+          <React.Suspense
+            fallback={
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  position: 'absolute',
+                  inset: 0,
+                  background: '#06060e',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <div style={{ color: 'rgba(255,255,255,0.3)', fontFamily: 'DM Sans, sans-serif', fontSize: 11, letterSpacing: '0.4em', textTransform: 'uppercase' }}>
+                  Loading Assets…
+                </div>
+              </div>
+            }
+          >
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                position: 'absolute',
+                inset: 0,
+              }}
+            >
+              <AssetPage
+                isLoading={isLoading}
+                isWeekend={isWeekend}
+                prices={prices}
+                goldPrice={goldPrice}
+                silverPrice={silverPrice}
+                btcPrice={btcPrice}
+                goldChangePercent={goldChangePercent}
+                goldWeeklyChangePercent={goldWeeklyChangePercent}
+                silverChangePercent={silverChangePercent}
+                silverWeeklyChangePercent={silverWeeklyChangePercent}
+                btcChangePercent={btcChangePercent}
+                btcWeeklyChangePercent={btcWeeklyChangePercent}
+                btcMarketCap={btcMarketCap}
+                btcDominance={btcDominance}
+                btcVolume24h={btcVolume24h}
+                btcVolumeChangePercent={btcVolumeChangePercent}
+                goldSentiment={goldSentiment}
+                silverSentiment={silverSentiment}
+                bitcoinSentiment={marketSentiment}
+                fetchSentimentFor={handleFetchSentimentFor}
+              />
+            </div>
+          </React.Suspense>
+        )}
 
         {/* Intelligence — wrapper starts below the floating header so its
             scrollable content doesn't tuck under the glass nav. */}

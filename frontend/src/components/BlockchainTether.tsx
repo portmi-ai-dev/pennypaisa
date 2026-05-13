@@ -1,6 +1,7 @@
 import React, { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { useThrottledFrame } from '../lib/useThrottledFrame';
 
 interface BlockchainTetherProps {
   start: [number, number, number];
@@ -32,11 +33,10 @@ export const BlockchainTether: React.FC<BlockchainTetherProps> = ({ start, end, 
 
   const pulseRefs = useRef<THREE.Mesh[]>([]);
 
-  useFrame((state) => {
+  useThrottledFrame((state) => {
     if (!groupRef.current || !visible) return;
     const t = state.clock.elapsedTime;
-    
-    // Animate data pulses
+
     pulseRefs.current.forEach((pulseMesh, i) => {
       if (pulseMesh) {
         const p = pulses[i];

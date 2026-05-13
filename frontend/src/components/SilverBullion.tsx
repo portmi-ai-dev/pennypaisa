@@ -8,6 +8,7 @@ import { USDBearishAnimation } from './USDBearishAnimation';
 import { motion } from 'motion/react';
 
 import { soundManager } from '../lib/sounds';
+import { useThrottledFrame } from '../lib/useThrottledFrame';
 
 interface SilverBullionProps {
   price?: number; // 0 to 100
@@ -170,7 +171,7 @@ const AuraEffect = ({ isActive, width, height }: { isActive: boolean, width: num
   const meshRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
 
-  useFrame((state) => {
+  useThrottledFrame((state) => {
     if (materialRef.current) {
       materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
       materialRef.current.uniforms.uOpacity.value = THREE.MathUtils.lerp(
@@ -268,7 +269,7 @@ const ElectricityEffect = ({ level, width, height }: { level: number, width: num
   const meshRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
 
-  useFrame((state) => {
+  useThrottledFrame((state) => {
     if (materialRef.current) {
       materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
       const targetIntensity = level === 1 ? 0.15 : level === 2 ? 0.45 : level === 3 ? 1.0 : 0;

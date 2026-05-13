@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { motion } from 'motion/react';
 
 import { soundManager } from '../lib/sounds';
+import { useThrottledFrame } from '../lib/useThrottledFrame';
 
 interface GoldBullionProps {
   price?: number; // 0 to 100
@@ -39,7 +40,7 @@ const AuraEffect = ({ isActive, width, height }: { isActive: boolean, width: num
   const meshRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
 
-  useFrame((state) => {
+  useThrottledFrame((state) => {
     if (materialRef.current) {
       materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
       materialRef.current.uniforms.uOpacity.value = THREE.MathUtils.lerp(
@@ -141,9 +142,8 @@ const AuraEffect = ({ isActive, width, height }: { isActive: boolean, width: num
 const Bolt = ({ position, rotation, scale, color }: { position: [number, number, number], rotation: [number, number, number], scale: number, color: string }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   
-  useFrame((state) => {
+  useThrottledFrame(() => {
     if (meshRef.current) {
-      // High-speed flickering
       meshRef.current.visible = Math.random() > 0.5;
     }
   });

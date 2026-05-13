@@ -3,6 +3,7 @@ import { useRef, useEffect, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Text, RoundedBox } from '@react-three/drei';
 import * as THREE from 'three';
+import { useThrottledFrame } from '../lib/useThrottledFrame';
 
 interface BlockchainNodeProps {
   position: [number, number, number];
@@ -32,7 +33,7 @@ export const BlockchainNode: React.FC<BlockchainNodeProps> = ({
   // discarded whatever y was passed in — the node ended up at local y≈0
   // and overlapped its parent BitcoinCuboid completely. Now we anchor at
   // position[1] and oscillate ±0.2 around it.
-  useFrame((state) => {
+  useThrottledFrame((state) => {
     if (!groupRef.current || !visible) return;
     const t = state.clock.elapsedTime;
     groupRef.current.position.y = position[1] + Math.sin(t * 0.5 + 1) * 0.2;
