@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 
-import { MarketingHeader } from './MarketingHeader';
+import { AppHeader } from './AppHeader';
 import { AssetPage } from '../pages/AssetPage';
 import { IntelligencePage } from '../pages/IntelligencePage';
 import { CapitalFlowPage } from '../pages/CapitalFlowPage';
@@ -266,7 +266,7 @@ export const AppShell: React.FC = () => {
         }
       : null;
 
-  // Visual height of the floating MarketingHeader in app variant: 14px*2
+  // Visual height of the floating AppHeader: 14px*2
   // padding + ~38px tallest child (the pill) ≈ 66px. Buffer to 76 so non-
   // canvas pages clear it cleanly.
   const HEADER_CLEARANCE = 76;
@@ -281,7 +281,7 @@ export const AppShell: React.FC = () => {
         overflow: 'hidden',
       }}
     >
-      <MarketingHeader prices={prices} loading={isLoading} variant="app" />
+      <AppHeader prices={prices} loading={isLoading} />
 
       <main style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
         {/* Asset (3D bullion scene) — conditionally mounted so the WebGL
