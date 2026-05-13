@@ -1,14 +1,13 @@
-"""YouTube transcript resolver (URL -> transcript text/segments).
+"""YouTube audio downloader + AssemblyAI transcription pipeline.
 
-Supports residential proxy rotation and cookie-based auth to
-avoid YouTube IP blocks on cloud servers.
+Flow: yt-dlp downloads audio → upload to AssemblyAI → poll for result.
+Supports proxy and cookie-based auth to avoid YouTube IP blocks.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import re
 import shutil
 import tempfile
 import time
@@ -17,12 +16,6 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import requests
-from youtube_transcript_api import (
-    CouldNotRetrieveTranscript,
-    NoTranscriptFound,
-    TranscriptsDisabled,
-    YouTubeTranscriptApi,
-)
 from yt_dlp import YoutubeDL
 
 from app.core.config import settings
@@ -36,15 +29,11 @@ ASSEMBLYAI_BASE_URL = "https://api.assemblyai.com"
 # Proxy + cookie helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_proxy_url() -> str | None:
     """Return raw proxy URL from settings, or None."""
     url = (settings.YT_PROXY_URL or "").strip()
     return url or None
-
-
-def _get_yt_dlp_proxy() -> str | None:
-    """Return proxy URL string for yt-dlp, or None."""
-    return _get_proxy_url()
 
 
 def _get_cookies_file() -> str | None:
@@ -57,53 +46,9 @@ def _get_cookies_file() -> str | None:
     return None
 
 
-def _build_transcript_api() -> YouTubeTranscriptApi:
-    """Build YouTubeTranscriptApi instance with proxy_config if configured.
-
-    Priority:
-    1. Webshare rotating residential proxy (first-class library support)
-    2. Generic proxy URL (any HTTP/HTTPS/SOCKS proxy)
-    3. No proxy (direct connection — fine for dev, blocked on cloud)
-    """
-    # 1. Webshare (recommended for production)
-    ws_user = (settings.YT_WEBSHARE_PROXY_USERNAME or "").strip()
-    ws_pass = (settings.YT_WEBSHARE_PROXY_PASSWORD or "").strip()
-    if ws_user and ws_pass:
-        try:
-            from youtube_transcript_api.proxies import WebshareProxyConfig
-            proxy_config = WebshareProxyConfig(
-                proxy_username=ws_user,
-                proxy_password=ws_pass,
-            )
-            logger.debug("YouTubeTranscriptApi using Webshare rotating proxy")
-            return YouTubeTranscriptApi(proxy_config=proxy_config)
-        except ImportError:
-            logger.warning(
-                "WebshareProxyConfig not available — upgrade youtube-transcript-api >= 0.6.3"
-            )
-        except Exception as exc:
-            logger.warning("Failed to configure Webshare proxy: %s", exc)
-
-    # 2. Generic proxy URL
-    proxy_url = _get_proxy_url()
-    if proxy_url:
-        try:
-            from youtube_transcript_api.proxies import GenericProxyConfig
-            proxy_config = GenericProxyConfig(
-                http_url=proxy_url,
-                https_url=proxy_url,
-            )
-            logger.debug("YouTubeTranscriptApi using generic proxy")
-            return YouTubeTranscriptApi(proxy_config=proxy_config)
-        except ImportError:
-            logger.warning(
-                "GenericProxyConfig not available — upgrade youtube-transcript-api >= 0.6.3"
-            )
-        except Exception as exc:
-            logger.warning("Failed to configure generic transcript proxy: %s", exc)
-
-    # 3. No proxy
-    return YouTubeTranscriptApi()
+# ---------------------------------------------------------------------------
+# URL / video-id helpers
+# ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True)
@@ -125,36 +70,9 @@ def extract_video_id(url: str) -> str | None:
     return None
 
 
-def _extract_entry_value(entry: Any, key: str, default: Any) -> Any:
-    if isinstance(entry, dict):
-        return entry.get(key, default)
-    return getattr(entry, key, default)
-
-
-def _is_valid_transcript(entries: list[Any]) -> bool:
-    combined_text = " ".join(
-        str(_extract_entry_value(entry, "text", "")) for entry in entries
-    )
-    return bool(re.search(r"[A-Za-z0-9]", combined_text))
-
-
-def _is_upcoming_live_reason(reason: str) -> bool:
-    lowered = (reason or "").lower()
-    return any(
-        marker in lowered
-        for marker in (
-            "live event will begin",
-            "will begin in",
-            "is upcoming",
-            "upcoming live",
-            "premiere",
-            "scheduled to begin",
-        )
-    )
-
-
-def _entries_to_text(entries: list[Any]) -> str:
-    return " ".join(str(_extract_entry_value(entry, "text", "")).strip() for entry in entries).strip()
+# ---------------------------------------------------------------------------
+# yt-dlp audio download
+# ---------------------------------------------------------------------------
 
 
 def _resolve_js_runtimes() -> dict[str, dict[str, str]] | None:
@@ -180,35 +98,19 @@ def _resolve_js_runtimes() -> dict[str, dict[str, str]] | None:
     return None
 
 
-def _fetch_youtube_transcript(video_id: str) -> list[Any]:
-    api = _build_transcript_api()
-
-    # Modern .fetch() (v0.6+) — proxy already baked into api instance
-    if hasattr(api, "fetch"):
-        return api.fetch(video_id)
-
-    # Legacy class-method API (no proxy support in old versions)
-    if hasattr(YouTubeTranscriptApi, "get_transcript"):
-        return YouTubeTranscriptApi.get_transcript(video_id)
-
-    transcripts = (
-        YouTubeTranscriptApi.list_transcripts(video_id)
-        if hasattr(YouTubeTranscriptApi, "list_transcripts")
-        else api.list(video_id)
-    )
-    try:
-        return transcripts.find_manually_created_transcript(["en"]).fetch()
-    except Exception:
-        return transcripts.find_generated_transcript(["en"]).fetch()
-
-
 def _download_audio_to_temp(video_url: str, output_dir: str) -> str:
+    """Download audio from a YouTube video using yt-dlp.
+
+    Returns path to the downloaded MP3 file.
+    """
     output_template = f"{output_dir}/audio.%(ext)s"
     options: dict[str, Any] = {
         "format": "bestaudio/best",
         "outtmpl": output_template,
         "quiet": True,
         "noplaylist": True,
+        # Enable remote JS challenge solver — fixes "n challenge solving failed"
+        "allowed_extractors": ["youtube"],
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -219,7 +121,7 @@ def _download_audio_to_temp(video_url: str, output_dir: str) -> str:
     }
 
     # Proxy support
-    proxy = _get_yt_dlp_proxy()
+    proxy = _get_proxy_url()
     if proxy:
         options["proxy"] = proxy
 
@@ -239,13 +141,20 @@ def _download_audio_to_temp(video_url: str, output_dir: str) -> str:
     return original_path.rsplit(".", 1)[0] + ".mp3"
 
 
+# ---------------------------------------------------------------------------
+# AssemblyAI transcription
+# ---------------------------------------------------------------------------
+
+
 def _transcribe_audio_with_assemblyai(audio_path: str) -> str:
+    """Upload audio file to AssemblyAI and poll until transcription completes."""
     api_key = (settings.assemblyai_api_key or "").strip()
     if not api_key:
         raise RuntimeError("ASSEMBLYAI_API_KEY is not configured")
 
     headers = {"authorization": api_key}
 
+    # 1. Upload audio
     upload_endpoint = f"{ASSEMBLYAI_BASE_URL}/v2/upload"
     with open(audio_path, "rb") as audio_file:
         upload_response = requests.post(
@@ -260,6 +169,7 @@ def _transcribe_audio_with_assemblyai(audio_path: str) -> str:
     if not audio_url:
         raise RuntimeError(f"Unexpected AssemblyAI upload response: {upload_payload}")
 
+    # 2. Submit transcription job
     submit_endpoint = f"{ASSEMBLYAI_BASE_URL}/v2/transcript"
     submit_payload = {
         "audio_url": audio_url,
@@ -278,6 +188,7 @@ def _transcribe_audio_with_assemblyai(audio_path: str) -> str:
     if not transcript_id:
         raise RuntimeError(f"Unexpected AssemblyAI submit response: {submit_data}")
 
+    # 3. Poll for completion
     polling_endpoint = f"{ASSEMBLYAI_BASE_URL}/v2/transcript/{transcript_id}"
     for _ in range(120):
         polling_response = requests.get(polling_endpoint, headers=headers, timeout=30)
@@ -297,45 +208,46 @@ def _transcribe_audio_with_assemblyai(audio_path: str) -> str:
     raise TimeoutError("AssemblyAI transcription timed out while waiting for completion")
 
 
-def _transcribe_video_audio_with_assemblyai(video_url: str) -> str:
+def transcribe_video(video_url: str) -> str:
+    """Download audio from YouTube video and transcribe via AssemblyAI.
+
+    This is the primary transcription pipeline:
+    yt-dlp download → ffmpeg extract MP3 → AssemblyAI upload → poll → text
+
+    Returns the transcribed text.
+    """
     with tempfile.TemporaryDirectory() as tmp_dir:
         audio_path = _download_audio_to_temp(video_url, tmp_dir)
         return _transcribe_audio_with_assemblyai(audio_path)
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
 def get_transcript_for_url(video_url: str) -> TranscriptResult:
+    """Get transcript for a YouTube video URL via AssemblyAI.
+
+    Downloads audio with yt-dlp, transcribes with AssemblyAI.
+    Raises RuntimeError if transcription fails or is unavailable.
+    """
     video_id = extract_video_id(video_url)
     if not video_id:
         raise ValueError("Invalid YouTube URL")
 
-    upcoming = False
-    try:
-        entries = _fetch_youtube_transcript(video_id)
-        if entries and _is_valid_transcript(entries):
-            return TranscriptResult(
-                video_id=video_id,
-                source="youtube",
-                text=_entries_to_text(entries),
-            )
-    except (TranscriptsDisabled, NoTranscriptFound, CouldNotRetrieveTranscript) as exc:
-        if _is_upcoming_live_reason(str(exc)):
-            upcoming = True
-    except Exception as exc:
-        if _is_upcoming_live_reason(str(exc)):
-            upcoming = True
-        else:
-            raise
+    api_key = (settings.assemblyai_api_key or "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "ASSEMBLYAI_API_KEY is not configured — required for transcription"
+        )
 
-    if upcoming:
-        raise RuntimeError("Transcript unavailable for upcoming live stream")
-
-    if (settings.assemblyai_api_key or "").strip():
-        transcript = _transcribe_video_audio_with_assemblyai(video_url)
-        if transcript and transcript.strip():
-            return TranscriptResult(
-                video_id=video_id,
-                source="assemblyai",
-                text=transcript.strip(),
-            )
+    transcript = transcribe_video(video_url)
+    if transcript and transcript.strip():
+        return TranscriptResult(
+            video_id=video_id,
+            source="assemblyai",
+            text=transcript.strip(),
+        )
 
     raise RuntimeError("Transcript unavailable for this video")

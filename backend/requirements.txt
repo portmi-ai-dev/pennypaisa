@@ -17,4 +17,3 @@ slowapi
 curl_cffi
 yt-dlp
 requests
-youtube-transcript-api

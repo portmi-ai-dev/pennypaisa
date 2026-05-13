@@ -7,13 +7,6 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from youtube_transcript_api import (
-    CouldNotRetrieveTranscript,
-    NoTranscriptFound,
-    TranscriptsDisabled,
-    YouTubeTranscriptApi,
-)
-
 from app.core.database import get_db
 from app.yt_data_collector.one_month_video_ids import fetch_last_month_video_ids
 
@@ -200,89 +193,6 @@ def _is_ip_blocked(reason: str) -> bool:
         "429",
         "403",
     ))
-
-
-def _entry_to_dict(entry: Any) -> dict[str, Any]:
-    if isinstance(entry, dict):
-        return entry
-    return {
-        "text": getattr(entry, "text", ""),
-        "start": getattr(entry, "start", 0),
-        "duration": getattr(entry, "duration", 0),
-    }
-
-
-def _fetched_entries_to_list(fetched_entries: Any) -> list[dict[str, Any]]:
-    if hasattr(fetched_entries, "to_raw_data"):
-        raw = fetched_entries.to_raw_data()
-        return [_entry_to_dict(item) for item in raw]
-    if isinstance(fetched_entries, list):
-        return [_entry_to_dict(item) for item in fetched_entries]
-    try:
-        return [_entry_to_dict(item) for item in fetched_entries]
-    except TypeError:
-        return []
-
-
-def _translation_languages_to_list(value: Any) -> list[dict[str, Any]] | None:
-    if value is None:
-        return None
-
-    normalized: list[dict[str, Any]] = []
-    for item in value:
-        if isinstance(item, dict):
-            normalized.append(item)
-            continue
-
-        normalized.append(
-            {
-                "language": getattr(item, "language", None),
-                "language_code": getattr(item, "language_code", None),
-            }
-        )
-
-    return normalized
-
-
-def _list_transcripts(video_id: str) -> Any:
-    from app.yt_data_collector.yt_transcriber import _build_transcript_api
-
-    api = _build_transcript_api()  # proxy baked in at construction time
-    if hasattr(api, "list"):
-        return api.list(video_id)
-    if hasattr(YouTubeTranscriptApi, "list_transcripts"):
-        return YouTubeTranscriptApi.list_transcripts(video_id)
-    raise RuntimeError("Unsupported youtube-transcript-api version: cannot list transcripts")
-
-
-def fetch_transcript_raw(video_id: str) -> dict[str, Any]:
-    transcript_list = _list_transcripts(video_id)
-
-    tracks: list[dict[str, Any]] = []
-    for transcript in transcript_list:
-        fetched_entries = transcript.fetch()
-        raw_entries = _fetched_entries_to_list(fetched_entries)
-
-        track_data = {
-            "language": getattr(transcript, "language", None),
-            "language_code": getattr(transcript, "language_code", None),
-            "is_generated": getattr(transcript, "is_generated", None),
-            "is_translatable": getattr(transcript, "is_translatable", None),
-            "translation_languages": _translation_languages_to_list(
-                getattr(transcript, "translation_languages", None)
-            ),
-            "raw_entries": raw_entries,
-        }
-        tracks.append(track_data)
-
-    if not tracks:
-        raise RuntimeError("No transcript tracks returned")
-
-    return {
-        "video_id": video_id,
-        "track_count": len(tracks),
-        "tracks": tracks,
-    }
 
 
 async def _insert_video_id_if_missing(record: dict[str, Any]) -> bool:
@@ -543,31 +453,25 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
     """Stage 2: transcribe rows in ``video_ids`` from the last N days that
     don't yet have a row in ``video_transcripts``.
 
-    For each candidate:
-        1. Try the YouTube transcript API (cheap). On success, store the
-           raw JSON in ``transcript_raw`` and stop.
-        2. On YouTube-API exception, fall back to AssemblyAI (yt-dlp +
-           ffmpeg + AssemblyAI long-poll, expensive). On success, store
-           the plain text in ``assembly_ai_transcript``.
-        3. If both fail, count as ``transcripts_unavailable``.
+    Pipeline per video:
+        yt-dlp audio download → AssemblyAI upload → poll → store text
 
-    AssemblyAI fallback is only attempted when ``ASSEMBLYAI_API_KEY`` is
-    configured — without it, behaviour matches the previous YouTube-only
-    flow.
+    Throttles between requests with exponential backoff on consecutive
+    failures. Aborts after 5 consecutive failures (yt-dlp blocked or
+    AssemblyAI down).
 
     Returns counts:
-        ``candidates``, ``youtube_stored``, ``assemblyai_stored``,
-        ``transcripts_unavailable``, ``transcripts_failed``.
+        ``candidates``, ``transcribed``, ``failed``, ``unavailable``.
     """
-    # Local imports to avoid a circular import at module-load time
-    # (``yt_transcriber`` itself imports from ``app.core.config``).
     from app.core.config import settings as _settings
-    from app.yt_data_collector.yt_transcriber import (
-        _is_upcoming_live_reason,
-        _transcribe_video_audio_with_assemblyai,
-    )
+    from app.yt_data_collector.yt_transcriber import transcribe_video
 
     await ensure_schema()
+
+    api_key = (getattr(_settings, "assemblyai_api_key", "") or "").strip()
+    if not api_key:
+        logger.warning("yt transcribe-missing: ASSEMBLYAI_API_KEY not configured — skipping")
+        return {"candidates": 0, "transcribed": 0, "failed": 0, "unavailable": 0}
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).date()
 
@@ -586,24 +490,16 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
 
     if not rows:
         logger.info("yt transcribe-missing: nothing to do (cutoff=%s)", cutoff)
-        return {
-            "candidates": 0,
-            "youtube_stored": 0,
-            "assemblyai_stored": 0,
-            "transcripts_unavailable": 0,
-            "transcripts_failed": 0,
-        }
+        return {"candidates": 0, "transcribed": 0, "failed": 0, "unavailable": 0}
 
-    assemblyai_key = (getattr(_settings, "assemblyai_api_key", "") or "").strip()
-    assemblyai_enabled = bool(assemblyai_key)
     per_video_timeout = _settings.YT_TRANSCRIPT_PER_VIDEO_TIMEOUT_SECONDS
     base_delay = _settings.YT_TRANSCRIPT_DELAY_SECONDS
 
-    youtube_stored = 0
-    assemblyai_stored = 0
+    transcribed = 0
     failed = 0
     unavailable = 0
-    consecutive_blocks = 0  # track IP blocks for exponential backoff
+    consecutive_failures = 0
+    _ABORT_THRESHOLD = 5
 
     for idx, row in enumerate(rows):
         video_id = row["video_id"]
@@ -615,143 +511,84 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
             "video_publish_date": row["video_publish_date"],
         }
 
-        # ── Throttle: anti-burst delay between requests ─────────────
+        # ── Throttle: delay between requests with backoff ───────────
         if idx > 0:
-            delay = base_delay * (2 ** min(consecutive_blocks, 4))  # max 16x backoff
-            if consecutive_blocks > 0:
+            delay = base_delay * (2 ** min(consecutive_failures, 4))
+            if consecutive_failures > 0:
                 logger.info(
-                    "yt throttle: waiting %.0fs (consecutive_blocks=%d)",
-                    delay, consecutive_blocks,
+                    "yt throttle: waiting %.0fs (consecutive_failures=%d)",
+                    delay, consecutive_failures,
                 )
             await asyncio.sleep(delay)
 
-        # Bail early if too many consecutive blocks — IP is likely burned
-        if consecutive_blocks >= 5:
+        # Bail if too many consecutive failures
+        if consecutive_failures >= _ABORT_THRESHOLD:
             logger.error(
-                "yt transcribe-missing: aborting after %d consecutive IP blocks — "
-                "configure YT_PROXY_URL or YT_COOKIES_FILE",
-                consecutive_blocks,
+                "yt transcribe-missing: aborting after %d consecutive failures — "
+                "check yt-dlp, AssemblyAI, and network config",
+                consecutive_failures,
             )
             failed += len(rows) - idx
             break
 
-        # ── 1. YouTube transcript API ────────────────────────────────
-        # ``asyncio.wait_for`` caps per-video wall-clock so a single
-        # hung request can't exhaust the bulk-job budget. NOTE: the
-        # underlying ``to_thread`` cannot be killed — a timed-out
-        # request keeps running in a background thread until the
-        # network call completes naturally — but the loop has already
-        # moved on to the next video.
-        try:
-            transcript_raw = await asyncio.wait_for(
-                asyncio.to_thread(fetch_transcript_raw, video_id),
-                timeout=per_video_timeout,
-            )
-            await _store_transcript(video_record=record, transcript_raw=transcript_raw)
-            logger.info("yt transcript stored (youtube) | video_id=%s", video_id)
-            youtube_stored += 1
-            consecutive_blocks = 0  # reset on success
-            continue
-        except asyncio.TimeoutError:
-            yt_reason = f"timeout after {per_video_timeout}s"
-        except (NoTranscriptFound, TranscriptsDisabled, CouldNotRetrieveTranscript) as exc:
-            yt_reason = f"{type(exc).__name__}: {exc}"
-        except Exception as exc:
-            # Hard failure on the YouTube path; we still try AssemblyAI
-            # before counting it as a real ``failed``.
-            yt_reason = f"unexpected: {exc}"
-
-        # Track IP blocks for backoff
-        if _is_ip_blocked(yt_reason):
-            consecutive_blocks += 1
-            logger.warning(
-                "yt IP block detected (%d consecutive) | video_id=%s | reason=%s",
-                consecutive_blocks, video_id, yt_reason,
-            )
-        else:
-            consecutive_blocks = 0
-
-        if _is_upcoming_live_reason(yt_reason):
-            unavailable += 1
-            logger.info(
-                "yt transcript unavailable | video_id=%s | yt=%s | assemblyai=skipped (upcoming)",
-                video_id,
-                yt_reason,
-            )
-            continue
-
-        # ── 2. AssemblyAI fallback ───────────────────────────────────
-        if not assemblyai_enabled:
-            unavailable += 1
-            logger.info(
-                "yt transcript unavailable | video_id=%s | yt=%s | assemblyai=disabled",
-                video_id,
-                yt_reason,
-            )
-            continue
-
+        # ── yt-dlp → AssemblyAI pipeline ────────────────────────────
         video_url = f"https://www.youtube.com/watch?v={video_id}"
         try:
-            assemblyai_text = await asyncio.wait_for(
-                asyncio.to_thread(_transcribe_video_audio_with_assemblyai, video_url),
+            text = await asyncio.wait_for(
+                asyncio.to_thread(transcribe_video, video_url),
                 timeout=per_video_timeout,
             )
-            assemblyai_text = (assemblyai_text or "").strip()
-            if not assemblyai_text:
+            text = (text or "").strip()
+            if not text:
                 raise RuntimeError("AssemblyAI returned empty transcript")
+
             await _store_transcript(
-                video_record=record, assembly_ai_transcript=assemblyai_text
+                video_record=record, assembly_ai_transcript=text
             )
-            logger.info(
-                "yt transcript stored (assemblyai) | video_id=%s | yt_reason=%s",
-                video_id,
-                yt_reason,
-            )
-            assemblyai_stored += 1
-            consecutive_blocks = 0  # AssemblyAI success means pipeline works
+            logger.info("yt transcript stored | video_id=%s", video_id)
+            transcribed += 1
+            consecutive_failures = 0
         except asyncio.TimeoutError:
             failed += 1
-            if _is_ip_blocked(yt_reason):
-                consecutive_blocks += 1
+            consecutive_failures += 1
             logger.warning(
-                "yt transcript failed (both paths) | video_id=%s | yt=%s | assemblyai=timeout after %ss",
-                video_id,
-                yt_reason,
-                per_video_timeout,
+                "yt transcript timeout | video_id=%s | timeout=%ss",
+                video_id, per_video_timeout,
             )
-        except Exception as aai_exc:
-            failed += 1
-            if _is_ip_blocked(str(aai_exc)) or _is_ip_blocked(yt_reason):
-                consecutive_blocks += 1
-            logger.warning(
-                "yt transcript failed (both paths) | video_id=%s | yt=%s | assemblyai=%s",
-                video_id,
-                yt_reason,
-                aai_exc,
-            )
+        except Exception as exc:
+            exc_str = str(exc)
+            if _is_ip_blocked(exc_str):
+                consecutive_failures += 1
+                failed += 1
+                logger.warning(
+                    "yt transcript IP blocked | video_id=%s | %s",
+                    video_id, exc_str[:200],
+                )
+            elif "upcoming" in exc_str.lower() or "premiere" in exc_str.lower():
+                unavailable += 1
+                logger.info(
+                    "yt transcript unavailable (upcoming) | video_id=%s", video_id
+                )
+            else:
+                failed += 1
+                consecutive_failures += 1
+                logger.warning(
+                    "yt transcript failed | video_id=%s | %s",
+                    video_id, exc_str[:200],
+                )
 
     return {
         "candidates": len(rows),
-        "youtube_stored": youtube_stored,
-        "assemblyai_stored": assemblyai_stored,
-        "transcripts_unavailable": unavailable,
-        "transcripts_failed": failed,
+        "transcribed": transcribed,
+        "failed": failed,
+        "unavailable": unavailable,
     }
 
 
 async def sync_video_ids_and_transcripts(
     *, channel_urls: tuple[str, ...], max_age_days: int
 ) -> dict[str, int]:
-    """Combined sync used by the hourly cron: scrape IDs then transcribe.
-
-    Stage 1 — ``scrape_video_ids_only``: insert any new video IDs.
-    Stage 2 — ``transcribe_missing``: fetch transcripts (YouTube API
-    primary, AssemblyAI fallback) for every row in the window that
-    doesn't already have a transcript.
-
-    Delegates to the split-stage helpers so the AssemblyAI fallback +
-    UPSERT semantics + counters stay in one place.
-    """
+    """Combined sync: scrape IDs then transcribe via yt-dlp + AssemblyAI."""
     scrape_counts = await scrape_video_ids_only(
         channel_urls=channel_urls, max_age_days=max_age_days
     )
@@ -764,10 +601,9 @@ async def sync_video_ids_and_transcripts(
         "insert_failed": scrape_counts["insert_failed"],
         # ── stage 2 (transcribe) ────────────────────────────────────────
         "transcript_candidates": transcript_counts["candidates"],
-        "youtube_stored": transcript_counts["youtube_stored"],
-        "assemblyai_stored": transcript_counts["assemblyai_stored"],
-        "transcripts_unavailable": transcript_counts["transcripts_unavailable"],
-        "transcripts_failed": transcript_counts["transcripts_failed"],
+        "transcribed": transcript_counts["transcribed"],
+        "transcripts_failed": transcript_counts["failed"],
+        "transcripts_unavailable": transcript_counts["unavailable"],
     }
 
 
