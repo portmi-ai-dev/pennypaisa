@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -11,6 +11,8 @@ from app.api.routes.yt_backfill import router as yt_router
 from app.api.routes.yt_transcriber import router as yt_transcriber_router
 from app.core.lifespan import lifespan
 from app.core.rate_limit import limiter
+from app.core.redis_client import get_redis
+from app.core.database import get_db
 
 app = FastAPI(lifespan=lifespan)
 
@@ -30,3 +32,25 @@ app.include_router(yt_transcriber_router)
 @app.get("/")
 def root() -> dict[str, str]:
     return {"message": "PennyPaisa backend is running"}
+
+
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready() -> dict[str, str]:
+    try:
+        async with get_db() as conn:
+            await conn.fetchval("SELECT 1")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"db_not_ready: {exc}") from exc
+
+    try:
+        redis = get_redis()
+        await redis.ping()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"redis_not_ready: {exc}") from exc
+
+    return {"status": "ready"}

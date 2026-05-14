@@ -17,14 +17,11 @@ async def connect_db() -> asyncpg.Pool:
     if not settings.NEON_DATABASE_URL.startswith(("postgresql://", "postgres://")):
         raise RuntimeError("NEON_DATABASE_URL must start with postgres:// or postgresql://")
     if _pool is None:
-        # min_size=5 keeps a warm pool ready for hover bursts; max_size=30
-        # gives headroom for ~5k concurrent users (each request holds a
-        # connection only for the brief PK lookup). Tune via load tests.
         _pool = await asyncpg.create_pool(
             dsn=settings.NEON_DATABASE_URL,
-            min_size=5,
-            max_size=30,
-            command_timeout=10,
+            min_size=settings.DB_POOL_MIN_SIZE,
+            max_size=settings.DB_POOL_MAX_SIZE,
+            command_timeout=settings.DB_COMMAND_TIMEOUT,
         )
     return _pool
 

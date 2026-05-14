@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     NEON_DATABASE_URL: str | None = Field(
         None, description="Neon Postgres connection URL (postgresql://...)"
     )
+    DB_POOL_MIN_SIZE: int = Field(5, description="Postgres pool min size")
+    DB_POOL_MAX_SIZE: int = Field(30, description="Postgres pool max size")
+    DB_COMMAND_TIMEOUT: int = Field(10, description="Postgres command timeout seconds")
 
     # Google Gemini
     GEMINI_API_KEY: str = Field(..., description="Google Gemini API key")
