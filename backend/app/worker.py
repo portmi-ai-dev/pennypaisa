@@ -39,6 +39,12 @@ from arq.cron import cron
 
 from app.core.config import settings
 from app.core.database import close_db, connect_db
+from app.core.logging_config import configure_logging
+
+# Configure root logger before anything imports loggers so every
+# logger.info() call in worker jobs produces visible output.
+configure_logging()
+
 from app.sentiment.gemini.schema import ensure_schema as ensure_gemini_schema
 from app.sentiment.gemini.service import (
     generate_and_cache as gemini_generate_and_cache,

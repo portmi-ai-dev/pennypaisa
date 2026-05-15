@@ -11,11 +11,21 @@ from app.api.routes.sentiment_gemini import router as sentiment_gemini_router
 from app.api.routes.yt_backfill import router as yt_router
 from app.api.routes.yt_transcriber import router as yt_transcriber_router
 from app.core.lifespan import lifespan
+from app.core.logging_config import configure_logging
 from app.core.rate_limit import limiter
 from app.core.redis_client import get_redis
 from app.core.database import get_db
+from app.core.request_logger import RequestLoggerMiddleware
+
+# Configure root logger BEFORE anything imports loggers, so every
+# logger.info(...) across the codebase produces visible output.
+configure_logging()
 
 app = FastAPI(lifespan=lifespan)
+
+# Request/response logger — runs before SlowAPI so rate-limit rejections
+# also get logged.
+app.add_middleware(RequestLoggerMiddleware)
 
 # slowapi: per-IP rate limiting. Routes opt in via @limiter.limit(...).
 app.state.limiter = limiter
