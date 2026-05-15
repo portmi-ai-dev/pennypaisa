@@ -21,8 +21,8 @@ export interface Prices {
 
 export interface AssetSentiment {
   consensus: 'bull' | 'bear' | 'neutral';
-  nearTermView: string;
-  longTermView: string;
+  summary: string;
+  analystView: string;
   confidence?: 'low' | 'medium' | 'high';
   lastUpdated?: string;
 }

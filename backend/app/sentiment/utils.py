@@ -108,13 +108,13 @@ def _parse_sentiment(text: str) -> AssetSentiment:
     else:
         confidence = None
 
-    near_term = str(payload.get("nearTermView", "")).strip()
-    long_term = str(payload.get("longTermView", "")).strip()
+    summary = str(payload.get("summary", "")).strip()
+    analyst_view = str(payload.get("analystView", "")).strip()
 
     return AssetSentiment(
         consensus=consensus,
-        nearTermView=near_term or "Limited short-term signals from analyst commentary.",
-        longTermView=long_term or "Insufficient analyst coverage for long-term view.",
+        summary=summary or "Market signals mixed.",
+        analystView=analyst_view or "Insufficient analyst coverage to form a detailed view.",
         confidence=confidence,
         lastUpdated=datetime.now().strftime("%b %d, %Y %H:%M"),
     )

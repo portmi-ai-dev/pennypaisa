@@ -32,8 +32,8 @@ interface BitcoinCuboidProps {
   volumeChangePercent?: number;
   marketSentiment?: {
     consensus: 'bull' | 'bear' | 'neutral';
-    nearTermView: string;
-    longTermView: string;
+    summary: string;
+    analystView: string;
     lastUpdated?: string;
   } | null;
 }

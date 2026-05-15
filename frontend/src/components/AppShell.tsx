@@ -62,8 +62,8 @@ class SceneErrorBoundary extends React.Component<
 // Shape returned by /api/sentiment[/asset].
 type Sentiment = {
   consensus: 'bull' | 'bear' | 'neutral';
-  nearTermView: string;
-  longTermView: string;
+  summary: string;
+  analystView: string;
   confidence?: 'low' | 'medium' | 'high';
   lastUpdated?: string | null;
 };

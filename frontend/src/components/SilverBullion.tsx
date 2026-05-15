@@ -21,8 +21,8 @@ interface SilverBullionProps {
   isWeekend?: boolean;
   marketSentiment?: {
     consensus: 'bull' | 'bear' | 'neutral';
-    nearTermView: string;
-    longTermView: string;
+    summary: string;
+    analystView: string;
     lastUpdated?: string;
   } | null;
   otherBullionRef?: React.RefObject<THREE.Group | null>;
@@ -417,8 +417,8 @@ export const SilverBullion = forwardRef<THREE.Group, SilverBullionProps>(({
 
   const marketSentiment = propSentiment || {
     consensus: 'bull' as const,
-    nearTermView: "Silver outperforming gold as Au:Ag ratio collapses toward 60. Short squeeze on COMEX plus green energy demand creating strong near-term momentum.",
-    longTermView: "Multi-year breakout confirmed — $35 now support. Structural demand from solar and EV sectors underpins long-term bull case. Target $48-50 zone.",
+    summary: "Silver outperforming gold. Au:Ag ratio compression and industrial demand drive bull case.",
+    analystView: "Au:Ag ratio collapsing toward 60. COMEX short squeeze plus green energy demand fueling momentum. Multi-year breakout confirmed — $35 now support. Structural demand from solar and EV sectors underpins long-term bull case. Target $48-50 zone.",
     lastUpdated: "APRIL 14, 2026"
   };
   const [isJewelryExpanded, setIsJewelryExpanded] = useState(false);

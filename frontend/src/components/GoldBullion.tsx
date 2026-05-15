@@ -20,8 +20,8 @@ interface GoldBullionProps {
   isWeekend?: boolean;
   marketSentiment?: {
     consensus: 'bull' | 'bear' | 'neutral';
-    nearTermView: string;
-    longTermView: string;
+    summary: string;
+    analystView: string;
     lastUpdated?: string;
   } | null;
   otherBullionRef?: React.RefObject<THREE.Group | null>;
@@ -214,8 +214,8 @@ export const GoldBullion = forwardRef<THREE.Group, GoldBullionProps>(({
 
   const marketSentiment = propSentiment || {
     consensus: 'bull' as const,
-    nearTermView: "Gold holding above $2,700 with strong central bank demand. Near-term support at 20-week SMA around $2,600.",
-    longTermView: "Structural bull intact — macro liquidity expansion and de-dollarisation flows support continued uptrend. Next major target $3,350.",
+    summary: "Gold structural bull intact. Central bank demand and macro liquidity drive sustained bid above $2,700.",
+    analystView: "Holding above $2,700 with strong central bank accumulation. 20-week SMA at $2,600 as near-term support. Macro liquidity expansion and de-dollarisation flows underpin the structural bull case. Next major target $3,350.",
     lastUpdated: "APRIL 14, 2026"
   };
   

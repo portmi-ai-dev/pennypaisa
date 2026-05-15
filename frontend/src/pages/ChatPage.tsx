@@ -107,8 +107,8 @@ function buildSystemPrompt(
 
   const sentimentBlock = sentiment
     ? `\n\nToday's market read — Consensus: ${sentiment.consensus.toUpperCase()}.` +
-      ` Near-term (1-month): ${sentiment.nearTermView}` +
-      ` Long-term (1-year): ${sentiment.longTermView}` +
+      ` Summary: ${sentiment.summary}` +
+      ` Analyst view: ${sentiment.analystView}` +
       ` Let this colour your tone — ${
         sentiment.consensus === 'bull'
           ? 'measured confidence, not euphoria'

@@ -137,17 +137,17 @@ export const IntelPopup: React.FC<IntelPopupProps> = ({
             </span>
           </div>
 
-          {/* Near-term + Long-term cards */}
+          {/* Summary + Analyst View cards */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <AnalystCard
-              name="Near-Term · 1 Month"
+              name="Summary"
               accent={accent.primary}
-              body={sentiment.nearTermView}
+              body={sentiment.summary}
             />
             <AnalystCard
-              name="Long-Term · 1 Year"
+              name="Analyst View"
               accent={accent.primary}
-              body={sentiment.longTermView}
+              body={sentiment.analystView}
             />
           </div>
 

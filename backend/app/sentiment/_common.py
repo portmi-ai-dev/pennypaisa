@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Literal
 
 from app.sentiment import cache
@@ -22,6 +23,20 @@ from app.sentiment.transcripts import (
 )
 from app.sentiment.utils import generate_sentiment
 from app.models.sentiment import AssetSentiment
+
+
+GROQ_MODEL_NAME = "llama-3.3-70b-versatile"
+
+
+@dataclass(slots=True)
+class SentimentGenerationResult:
+    """Sentiment + metadata returned by generate_and_cache_with_meta."""
+
+    sentiment: AssetSentiment | None
+    model: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +65,8 @@ def clear_transcript_cache() -> None:
     _transcript_block_cache = None
 
 
-async def generate_and_cache(asset: Asset) -> AssetSentiment | None:
-    """Call Groq for ``asset`` and persist cache + history.
-
-    Uses only YouTube analyst transcripts as the data source —
-    no external price feeds.
-    """
+async def generate_and_cache_with_meta(asset: Asset) -> SentimentGenerationResult:
+    """Call Groq for ``asset``, persist cache + history, return full metadata."""
     transcript_block = await _get_transcript_block()
     prompt = build_prompt(asset, transcript_block=transcript_block)
     result = await generate_sentiment(prompt)
@@ -65,11 +76,23 @@ async def generate_and_cache(asset: Asset) -> AssetSentiment | None:
             result.sentiment,
             prompt=prompt,
             raw_response=result.raw_text,
-            model="llama-3.3-70b-versatile",
+            model=GROQ_MODEL_NAME,
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
             total_tokens=result.total_tokens,
         )
+    return SentimentGenerationResult(
+        sentiment=result.sentiment,
+        model=GROQ_MODEL_NAME,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
+        total_tokens=result.total_tokens,
+    )
+
+
+async def generate_and_cache(asset: Asset) -> AssetSentiment | None:
+    """Thin wrapper — returns only sentiment for cron/SWR paths."""
+    result = await generate_and_cache_with_meta(asset)
     return result.sentiment
 
 

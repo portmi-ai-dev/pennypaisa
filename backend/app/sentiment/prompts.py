@@ -81,23 +81,44 @@ _SCHEMA_SPEC = """OUTPUT FORMAT — pure JSON, no markdown, no code fences:
 
 {
   "consensus": "bull" | "bear" | "neutral",
-  "nearTermView": "<string>",
-  "longTermView": "<string>",
+  "summary": "<string>",
+  "analystView": "<string>",
   "confidence": "low" | "medium" | "high"
 }
 
-WRITING RULES:
-- Write as YOUR OWN authoritative view. Never say "analysts say", "Cowen", "Soloway", "they expect".
-- Every sentence MUST contain a concrete number, level, percentage, date, or named event.
-- BANNED phrases (auto-fail if you use these): "potential levels to watch", "key catalysts", "may occur", "remains to be seen", "limited specific data", "developments in", "market structure suggests", "could potentially".
-- Length: enough to convey real information. 2-4 sentences each. Quality over brevity.
-- consensus MUST match longTermView direction. If longTermView is bullish, consensus = "bull".
+FIELD DEFINITIONS:
 
-ANTI-HALLUCINATION RULES (CRITICAL):
-- ONLY use signals from the whitelist above. If transcripts only discuss Bitcoin and you're analysing gold, do NOT invent a connection. BTC dominance has ZERO relevance to gold.
-- If a transcript discusses inflation/yields/DXY/geopolitics — those DO apply (per whitelist). Use them.
-- If transcripts ONLY discuss blacklisted topics for this asset, set confidence "low" and base your view on whatever whitelisted macro signals exist.
-- Numbers and levels must come from the transcripts OR be widely-known current facts. Do NOT invent specific levels like "$2,400 invalidation" if no transcript mentions it."""
+- "consensus": Overall market direction. MUST match analystView direction.
+
+- "summary": Short and sweet — current market sentiment in 1-2 punchy sentences (about 30-50 words). Pure signal, no filler. Reader gets the bottom-line read instantly.
+  Example: "Gold structural bull intact. Inflation at 3.8%, central bank accumulation, and geopolitical risk drive sustained bid toward $10,000 target."
+
+- "analystView": Detailed reasoning — extract the key points from analyst commentary plus macro context. Cover what's driving the view, key levels, catalysts, and risks. Be specific and concrete. 3-6 sentences (about 80-150 words). This is the "why" behind the summary.
+  Example: "CPI at 3.8% with PPI surging 6% YoY confirms persistent supply-side inflation from Middle East energy crisis. Real yields at 2.0% remain elevated but rolling over. Downsloping parallel channel caps immediate upside near $2,650 resistance; $2,400 weekly close is structural invalidation. Central banks projected to buy 700-900 tonnes in 2026. US fiscal deficit at $2T for FY2026 underpins the long-term debasement thesis. Target: $10,000 over multi-year horizon."
+
+- "confidence": "high" = multiple aligned signals with specific levels. "medium" = direction clear but mixed timing. "low" = conflicting signals or indirect coverage only.
+
+ABSOLUTE RULES (violations = invalid response):
+
+1. NO ATTRIBUTION — NEVER reference any person or source.
+   ❌ "as mentioned by Gareth Soloway", "Benjamin Cowen targets", "analysts expect", "they expect", "according to commentary"
+   ✓ State views directly as your own.
+
+2. NO HEDGING — Direct declarative statements only.
+   ❌ "may", "might", "could", "potentially", "likely to", "expected to", "should", "appears to", "seems to"
+   ✓ "is", "will", "trades at", "targets", "supports", "drives"
+
+3. NO FILLER PHRASES:
+   ❌ "potential levels to watch", "key catalysts", "remains to be seen", "developments in", "market structure suggests", "play a role in"
+
+4. consensus MUST match analystView direction.
+
+5. Every sentence contains a concrete number, level, percentage, date, or named event.
+
+ANTI-HALLUCINATION:
+- Use ONLY whitelisted signals. BTC dominance has ZERO relevance to gold/silver.
+- Numbers must come from transcripts OR widely-known current facts. Do not invent levels.
+- If transcripts only cover blacklisted topics, use whatever whitelisted macro exists. Set confidence "low"."""
 
 
 # ---------------------------------------------------------------------------
@@ -161,12 +182,12 @@ def build_prompt(
 
     reasoning_steps = (
         "REASONING STEPS (think through these before writing JSON):\n"
-        f"1. Scan transcripts for direct {asset_label} mentions. Note any specific levels, targets, or technical setups quoted.\n"
+        f"1. Scan transcripts for direct {asset_label} mentions. Note specific levels, targets, technical setups.\n"
         f"2. Identify whitelisted macro signals (inflation, yields, DXY, geopolitics, etc.).\n"
         f"3. Filter OUT blacklisted signals — do not let them influence your {asset_label} view.\n"
-        f"4. For nearTermView: synthesise direct {asset_label} commentary + whitelisted macro for next 1 month.\n"
-        f"5. For longTermView: synthesise structural drivers + whitelisted macro for next 1 year.\n"
-        f"6. Set consensus to match longTermView direction. They cannot contradict.\n"
+        f"4. analystView: synthesise direct {asset_label} commentary + whitelisted macro into detailed reasoning. Cover drivers, levels, catalysts, risks.\n"
+        f"5. summary: distill the analystView into a 1-2 sentence bottom-line read.\n"
+        f"6. Set consensus to match analystView direction. They cannot contradict.\n"
         f"7. Confidence: high if multiple whitelisted signals align, medium if mixed, low if mostly indirect.\n"
     )
 
