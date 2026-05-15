@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 _MODEL = "llama-3.3-70b-versatile"
-_MAX_COMPLETION_TOKENS = 512
+_MAX_COMPLETION_TOKENS = 1024
 _TEMPERATURE = 0.0
 _MAX_RETRIES = 3
 _BASE_BACKOFF_SECONDS = 15.0
@@ -84,7 +84,6 @@ def _is_rate_limit_error(exc: Exception) -> bool:
 
 def _parse_sentiment(text: str) -> AssetSentiment:
     """Parse JSON into an `AssetSentiment`."""
-    # Strip markdown fences if model wraps output
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("\n", 1)[-1]
@@ -97,9 +96,9 @@ def _parse_sentiment(text: str) -> AssetSentiment:
     if not isinstance(payload, dict):
         raise ValueError("Groq payload is not an object")
 
-    market_type = str(payload.get("marketType", "neutral")).lower()
-    if market_type not in {"bull", "bear", "neutral"}:
-        market_type = "neutral"
+    consensus = str(payload.get("consensus", "neutral")).lower()
+    if consensus not in {"bull", "bear", "neutral"}:
+        consensus = "neutral"
 
     confidence = payload.get("confidence")
     if isinstance(confidence, str):
@@ -109,23 +108,14 @@ def _parse_sentiment(text: str) -> AssetSentiment:
     else:
         confidence = None
 
-    horizon = payload.get("horizon")
-    if isinstance(horizon, str):
-        horizon = horizon.lower()
-        if horizon not in {"short-term", "medium-term", "long-term"}:
-            horizon = None
-    else:
-        horizon = None
-
-    reasoning = _trim_words(str(payload.get("reasoning", "")), 35)
-    analyst = _trim_words(str(payload.get("analystView", "")), 55)
+    near_term = str(payload.get("nearTermView", "")).strip()
+    long_term = str(payload.get("longTermView", "")).strip()
 
     return AssetSentiment(
-        marketType=market_type,
+        consensus=consensus,
+        nearTermView=near_term or "Limited short-term signals from analyst commentary.",
+        longTermView=long_term or "Insufficient analyst coverage for long-term view.",
         confidence=confidence,
-        horizon=horizon,
-        reasoning=reasoning or "Signals are mixed; conviction low.",
-        analystView=analyst or "Watching macro structure and technical levels; no high-conviction setup yet.",
         lastUpdated=datetime.now().strftime("%b %d, %Y %H:%M"),
     )
 

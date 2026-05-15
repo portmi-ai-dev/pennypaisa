@@ -1,19 +1,16 @@
 """Gold sentiment fetcher."""
 
-from typing import Any
-
 from app.sentiment._common import generate_and_cache, get_or_swr
 from app.models.sentiment import AssetSentiment
 
 
 async def fetch_gold_sentiment(
-    prices: dict[str, Any] | None = None,
     *,
     use_cache: bool = True,
 ) -> AssetSentiment | None:
     """Fetch analyst-grade gold sentiment with stale-while-revalidate."""
     if use_cache:
-        cached = await get_or_swr("gold", prices)
+        cached = await get_or_swr("gold")
         if cached is not None:
             return cached
-    return await generate_and_cache("gold", prices)
+    return await generate_and_cache("gold")

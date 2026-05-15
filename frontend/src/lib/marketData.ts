@@ -19,14 +19,11 @@ export interface Prices {
   isWeekend?: boolean;
 }
 
-// Per-asset sentiment summary fetched from Gemini with Google Search grounding.
-// Surfaced on bullion-hover overlays, the Intelligence page, and (now) injected
-// into the Smart Asset chat system prompt so each character's tone reflects
-// today's market read.
 export interface AssetSentiment {
-  marketType: 'bull' | 'bear' | 'neutral';
-  reasoning: string;
-  analystView: string;
+  consensus: 'bull' | 'bear' | 'neutral';
+  nearTermView: string;
+  longTermView: string;
+  confidence?: 'low' | 'medium' | 'high';
   lastUpdated?: string;
 }
 

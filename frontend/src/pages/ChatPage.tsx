@@ -106,12 +106,13 @@ function buildSystemPrompt(
       : '';
 
   const sentimentBlock = sentiment
-    ? `\n\nToday's market read for you: ${sentiment.marketType.toUpperCase()}. ${sentiment.reasoning}` +
-      (sentiment.analystView ? ` Analyst view: "${sentiment.analystView}"` : '') +
+    ? `\n\nToday's market read — Consensus: ${sentiment.consensus.toUpperCase()}.` +
+      ` Near-term (1-month): ${sentiment.nearTermView}` +
+      ` Long-term (1-year): ${sentiment.longTermView}` +
       ` Let this colour your tone — ${
-        sentiment.marketType === 'bull'
+        sentiment.consensus === 'bull'
           ? 'measured confidence, not euphoria'
-          : sentiment.marketType === 'bear'
+          : sentiment.consensus === 'bear'
           ? 'sober and grounded, not panicked'
           : 'patient and observational'
       }.`

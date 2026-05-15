@@ -31,9 +31,9 @@ interface BitcoinCuboidProps {
   volume24h?: string;
   volumeChangePercent?: number;
   marketSentiment?: {
-    marketType: 'bull' | 'bear' | 'neutral';
-    reasoning: string;
-    analystView: string;
+    consensus: 'bull' | 'bear' | 'neutral';
+    nearTermView: string;
+    longTermView: string;
     lastUpdated?: string;
   } | null;
 }
@@ -364,9 +364,9 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
             onPointerOver={(e) => {
               e.stopPropagation();
               if (!hoveredLogo) {
-                if (marketSentiment?.marketType === 'bull') {
+                if (marketSentiment?.consensus === 'bull') {
                   soundManager.playBullBellow();
-                } else if (marketSentiment?.marketType === 'bear') {
+                } else if (marketSentiment?.consensus === 'bear') {
                   soundManager.playBearRoar();
                 } else {
                   soundManager.playRuffle();
@@ -493,9 +493,9 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
               onPointerOver={(e) => {
                 e.stopPropagation();
                 if (!hoveredLogo) {
-                  if (marketSentiment?.marketType === 'bull') {
+                  if (marketSentiment?.consensus === 'bull') {
                     soundManager.playBullBellow();
-                  } else if (marketSentiment?.marketType === 'bear') {
+                  } else if (marketSentiment?.consensus === 'bear') {
                     soundManager.playBearRoar();
                   } else {
                     soundManager.playRuffle();
@@ -552,7 +552,7 @@ export const BitcoinCuboid: React.FC<BitcoinCuboidProps> = ({
                 while the Gemini-fed marketSentiment is null/loading so the
                 front-face rotation is always visibly happening. */}
             {displayMode === 'sentiment' && (
-              <SentimentDisplay marketType={marketSentiment?.marketType ?? 'neutral'} />
+              <SentimentDisplay marketType={marketSentiment?.consensus ?? 'neutral'} />
             )}
 
             {/* To The Moon Display (Front Face) */}

@@ -13,7 +13,6 @@ from app.sentiment.aggregator import (
     regenerate_single_asset,
 )
 from app.models.sentiment import AssetSentiment, IntelSentimentResponse
-from app.services.aggregator import aggregate_prices
 
 router = APIRouter(prefix="/api", tags=["sentiment"])
 
@@ -31,14 +30,14 @@ _ASSET_ALIASES: dict[str, Literal["gold", "silver", "crypto"]] = {
 @router.get("/sentiment", response_model=IntelSentimentResponse)
 @limiter.limit("30/minute")
 async def get_sentiment(request: Request) -> IntelSentimentResponse:
-    """Return the latest Gemini-driven sentiment for all assets."""
+    """Return the latest sentiment for all assets."""
     try:
-        return await aggregate_sentiments(request.app.state.http_client)
+        return await aggregate_sentiments()
     except Exception as exc:
         raise HTTPException(
             status_code=503,
             detail={
-                "error": "Gemini sentiment unavailable",
+                "error": "Sentiment unavailable",
                 "message": str(exc),
             },
         ) from exc
@@ -51,18 +50,13 @@ async def get_asset_sentiment(
     request: Request,
     refresh: bool = Query(False, description="Bypass cache and regenerate."),
 ) -> AssetSentiment:
-    """Return sentiment for a single asset — powers the bullion-hover panel.
-
-    Served from cache on the hot path (~ms). On a cache miss we fetch fresh
-    prices and call Gemini once, then cache for 10 minutes.
-    """
+    """Return sentiment for a single asset — powers the bullion-hover panel."""
     normalized = _ASSET_ALIASES.get(asset.lower())
     if normalized is None:
         raise HTTPException(status_code=404, detail=f"Unknown asset '{asset}'")
 
     try:
         sentiment = await fetch_asset_sentiment(
-            request.app.state.http_client,
             normalized,
             force_refresh=refresh,
         )
@@ -70,7 +64,7 @@ async def get_asset_sentiment(
         raise HTTPException(
             status_code=503,
             detail={
-                "error": "Gemini sentiment unavailable",
+                "error": "Sentiment unavailable",
                 "asset": normalized,
                 "message": str(exc),
             },
@@ -80,7 +74,7 @@ async def get_asset_sentiment(
         raise HTTPException(
             status_code=503,
             detail={
-                "error": "Gemini sentiment unavailable",
+                "error": "Sentiment unavailable",
                 "asset": normalized,
                 "message": "Upstream model returned no usable response.",
             },
@@ -100,9 +94,7 @@ async def regenerate_asset_sentiment(
         raise HTTPException(status_code=404, detail=f"Unknown asset '{asset}'")
 
     try:
-        sentiment = await regenerate_single_asset(
-            request.app.state.http_client, normalized
-        )
+        sentiment = await regenerate_single_asset(normalized)
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -120,17 +112,11 @@ async def regenerate_asset_sentiment(
 @router.post("/sentiment/regenerate", response_model=IntelSentimentResponse)
 @limiter.limit("3/minute")
 async def regenerate_sentiment(request: Request) -> IntelSentimentResponse:
-    """Force-regenerate sentiment for all assets — sequential to respect TPM.
-
-    Calls Groq for crypto, gold, and silver one at a time, persists results,
-    then returns the freshly generated data. Never returns cached data.
-    """
+    """Force-regenerate sentiment for all assets — sequential to respect TPM."""
     try:
-        prices = await aggregate_prices(request.app.state.http_client)
-        # Sequential — avoids 429 TPM burst from parallel Groq calls
-        crypto = await generate_and_cache("crypto", prices)
-        gold = await generate_and_cache("gold", prices)
-        silver = await generate_and_cache("silver", prices)
+        crypto = await generate_and_cache("crypto")
+        gold = await generate_and_cache("gold")
+        silver = await generate_and_cache("silver")
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -146,8 +132,6 @@ async def regenerate_sentiment(request: Request) -> IntelSentimentResponse:
 
 
 # ── Backward-compat aliases for /api/intel/sentiment* ──────────────────
-# Frontend may still call the old paths. These simply delegate to the
-# handlers above so there's zero code duplication.
 
 
 @router.get("/intel/sentiment", response_model=IntelSentimentResponse, include_in_schema=False)

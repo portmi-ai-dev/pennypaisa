@@ -19,9 +19,9 @@ interface GoldBullionProps {
   isMorphed?: boolean;
   isWeekend?: boolean;
   marketSentiment?: {
-    marketType: 'bull' | 'bear' | 'neutral';
-    reasoning: string;
-    analystView: string;
+    consensus: 'bull' | 'bear' | 'neutral';
+    nearTermView: string;
+    longTermView: string;
     lastUpdated?: string;
   } | null;
   otherBullionRef?: React.RefObject<THREE.Group | null>;
@@ -213,9 +213,9 @@ export const GoldBullion = forwardRef<THREE.Group, GoldBullionProps>(({
   const [, setHoveredIntelligence] = useState(false);
 
   const marketSentiment = propSentiment || {
-    marketType: 'bull' as const,
-    reasoning: "Gold has surged past the $2,700 psychological barrier, driven by a significant uptick in global liquidity and continued central bank front-running of currency debasement. The technical structure remains one of the strongest in decades.",
-    analystView: "The 20-week SMA is trending toward $2,600 — as long as that support holds on the weekly close, the macro bull is locked in. Bull flag target is cleared; next major pivot $3,350. DXY death cross on the daily is the green light for precious metals.",
+    consensus: 'bull' as const,
+    nearTermView: "Gold holding above $2,700 with strong central bank demand. Near-term support at 20-week SMA around $2,600.",
+    longTermView: "Structural bull intact — macro liquidity expansion and de-dollarisation flows support continued uptrend. Next major target $3,350.",
     lastUpdated: "APRIL 14, 2026"
   };
   
@@ -1640,9 +1640,9 @@ export const GoldBullion = forwardRef<THREE.Group, GoldBullionProps>(({
                   depthOffset={-2}
                   onPointerOver={(e) => {
                     e.stopPropagation();
-                    if (marketSentiment.marketType === 'bull') {
+                    if (marketSentiment.consensus === 'bull') {
                       soundManager.playBullBellow();
-                    } else if (marketSentiment.marketType === 'bear') {
+                    } else if (marketSentiment.consensus === 'bear') {
                       soundManager.playBearRoar();
                     } else {
                       soundManager.playRuffle();

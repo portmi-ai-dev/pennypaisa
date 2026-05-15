@@ -33,15 +33,14 @@ logger = logging.getLogger(__name__)
 
 Asset = Literal["gold", "silver", "crypto"]
 
-# 1 hour: refreshed proactively by the cron worker, so under healthy
-# operation every cache read is a hit.
-TTL_SECONDS = 60 * 60
+# 12 hours: refreshed proactively by the twice-daily cron (8AM/8PM UTC),
+# so under healthy operation every cache read is a hit.
+TTL_SECONDS = 12 * 60 * 60
 
-# Extra window (1 more hour) during which we still serve the old row
+# Extra window (2 more hours) during which we still serve the old row
 # while a background task regenerates it. Protects against a missed cron
-# tick or transient Gemini failure — users see the slightly-stale row
-# immediately instead of waiting on a cold-path Gemini call.
-STALE_TTL_SECONDS = 60 * 60
+# tick or transient Groq failure.
+STALE_TTL_SECONDS = 2 * 60 * 60
 
 
 def _advisory_lock_key(asset: Asset) -> int:

@@ -1,18 +1,16 @@
 """Fetch recent video transcripts from Neon DB for sentiment enrichment.
 
-Retrieves the latest N transcripts per channel from ``video_transcripts``,
-using the ``clean_transcript`` column which normalises both YouTube API
-(JSON with tracks/raw_entries) and AssemblyAI (plain text) sources into
-a single plain-text field.
-
-For existing rows that were inserted before the ``clean_transcript``
-column existed, falls back to on-the-fly extraction from the raw columns.
+Retrieves the latest N transcripts per tracked channel from
+``video_transcripts``, filtered to only channels in ``channels.json``.
+Uses the ``clean_transcript`` column which normalises both YouTube API
+and AssemblyAI sources into a single plain-text field.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from app.core.database import get_db
@@ -20,28 +18,46 @@ from app.yt_data_collector.video_id_corn import extract_clean_transcript
 
 logger = logging.getLogger(__name__)
 
-# How many recent transcripts per channel to include in the sentiment prompt
-TRANSCRIPTS_PER_CHANNEL = 2
+TRANSCRIPTS_PER_CHANNEL = 3
+MAX_CHARS_PER_TRANSCRIPT = 3000
+MAX_TOTAL_CHARS = 8000
+
+_CHANNELS_JSON = Path(__file__).resolve().parent.parent / "core" / "channels.json"
+
+
+def _load_tracked_channels() -> dict[str, str]:
+    """Return {channel_url: channel_name} from channels.json."""
+    try:
+        channels = json.loads(_CHANNELS_JSON.read_text())
+        return {
+            c["url"].rstrip("/"): c.get("name", "")
+            for c in channels
+            if c.get("url")
+        }
+    except Exception:
+        return {}
 
 
 async def fetch_recent_transcripts(
     *,
     per_channel: int = TRANSCRIPTS_PER_CHANNEL,
 ) -> list[dict[str, Any]]:
-    """Return the most recent transcripts across all tracked channels.
+    """Return the most recent transcripts from tracked channels only.
 
-    Uses a ``DISTINCT ON (channel_url)`` lateral pattern to fetch
-    the latest ``per_channel`` transcripts per channel, ordered by
-    publish date descending.
-
-    Each returned dict has:
-        channel_name, video_title, video_publish_date, clean_transcript
+    Filters to channels defined in channels.json so stray transcripts
+    from unknown channels never pollute the sentiment prompt.
     """
+    tracked = _load_tracked_channels()
+    if not tracked:
+        logger.warning("No tracked channels found in channels.json")
+        return []
+
+    tracked_urls = list(tracked.keys())
+
     query = """
         WITH ranked AS (
             SELECT
                 t.channel_url,
-                COALESCE(t.channel_name, v.channel_name) AS channel_name,
                 t.video_title,
                 t.video_publish_date,
                 t.clean_transcript,
@@ -52,32 +68,30 @@ async def fetch_recent_transcripts(
                     ORDER BY t.video_publish_date DESC NULLS LAST
                 ) AS rn
             FROM video_transcripts t
-            LEFT JOIN video_ids v USING (video_id)
-            WHERE t.channel_url IS NOT NULL
+            WHERE t.channel_url = ANY($1)
               AND (
                   t.clean_transcript IS NOT NULL
                   OR t.transcript_raw IS NOT NULL
                   OR t.assembly_ai_transcript IS NOT NULL
               )
         )
-        SELECT channel_url, channel_name, video_title,
+        SELECT channel_url, video_title,
                video_publish_date, clean_transcript,
                transcript_raw, assembly_ai_transcript
         FROM ranked
-        WHERE rn <= $1
+        WHERE rn <= $2
         ORDER BY channel_url, video_publish_date DESC
     """
 
     try:
         async with get_db() as conn:
-            rows = await conn.fetch(query, per_channel)
+            rows = await conn.fetch(query, tracked_urls, per_channel)
     except Exception as exc:
         logger.warning("Failed to fetch recent transcripts: %s", exc)
         return []
 
     results: list[dict[str, Any]] = []
     for row in rows:
-        # Use clean_transcript if populated; otherwise extract on-the-fly
         clean = row["clean_transcript"]
         if not clean:
             raw = row["transcript_raw"]
@@ -91,8 +105,11 @@ async def fetch_recent_transcripts(
         if not clean:
             continue
 
+        channel_url = (row["channel_url"] or "").rstrip("/")
+        channel_name = tracked.get(channel_url, channel_url.split("/")[-1])
+
         results.append({
-            "channel_name": row["channel_name"] or row["channel_url"],
+            "channel_name": channel_name,
             "video_title": row["video_title"] or "",
             "video_publish_date": (
                 row["video_publish_date"].isoformat()
@@ -109,15 +126,13 @@ async def fetch_recent_transcripts(
 def format_transcripts_for_prompt(
     transcripts: list[dict[str, Any]],
     *,
-    max_chars_per_transcript: int = 1000,
-    max_total_chars: int = 4000,
+    max_chars_per_transcript: int = MAX_CHARS_PER_TRANSCRIPT,
+    max_total_chars: int = MAX_TOTAL_CHARS,
 ) -> str:
     """Format transcripts into a prompt-ready block.
 
-    Truncates each transcript to ``max_chars_per_transcript`` and the
-    entire block to ``max_total_chars`` (~1000 tokens) to stay within
-    Groq's 8000 TPM budget alongside the base prompt (~5000 tokens).
-    Returns empty string if no transcripts.
+    Each transcript gets up to ``max_chars_per_transcript`` chars and the
+    total block is capped at ``max_total_chars``.
     """
     if not transcripts:
         return ""

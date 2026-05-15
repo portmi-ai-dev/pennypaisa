@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Literal
+from typing import Literal
 
 from app.sentiment import cache
 from app.sentiment.prompts import build_prompt
@@ -27,8 +27,6 @@ logger = logging.getLogger(__name__)
 
 Asset = Literal["gold", "silver", "crypto"]
 
-# Module-level transcript cache: fetched once per refresh cycle, shared
-# across all three asset calls so we don't hit the DB 3x.
 _transcript_block_cache: str | None = None
 
 
@@ -52,20 +50,14 @@ def clear_transcript_cache() -> None:
     _transcript_block_cache = None
 
 
-async def generate_and_cache(
-    asset: Asset,
-    prices: dict[str, Any] | None = None,
-) -> AssetSentiment | None:
+async def generate_and_cache(asset: Asset) -> AssetSentiment | None:
     """Call Groq for ``asset`` and persist cache + history.
 
-    Used by the cold-miss path AND the cron worker. Always writes both
-    tables; the history row carries prompt + raw + token counts.
-
-    Fetches recent YouTube analyst transcripts and includes them as
-    additional signal in the prompt.
+    Uses only YouTube analyst transcripts as the data source —
+    no external price feeds.
     """
     transcript_block = await _get_transcript_block()
-    prompt = build_prompt(asset, prices, transcript_block=transcript_block)
+    prompt = build_prompt(asset, transcript_block=transcript_block)
     result = await generate_sentiment(prompt)
     if result.sentiment is not None:
         await cache.set_cached(
@@ -81,34 +73,25 @@ async def generate_and_cache(
     return result.sentiment
 
 
-async def _refresh_in_background(asset: Asset, prices: dict[str, Any] | None) -> None:
-    """Background SWR refresh: dedup'd via Postgres advisory lock.
-
-    If another worker already holds the lock, skip — they'll handle it.
-    The advisory lock is a *session* lock; we always release it in
-    ``finally`` so a Gemini timeout can't leave it stuck.
-    """
+async def _refresh_in_background(asset: Asset) -> None:
+    """Background SWR refresh: dedup'd via Postgres advisory lock."""
     got = await cache.try_acquire_refresh_lock(asset)
     if not got:
         logger.debug("SWR refresh skipped (%s): another worker holds the lock", asset)
         return
     try:
-        await generate_and_cache(asset, prices)
+        await generate_and_cache(asset)
     except Exception as exc:
         logger.warning("SWR refresh failed (%s): %s", asset, exc)
     finally:
         await cache.release_refresh_lock(asset)
 
 
-async def get_or_swr(
-    asset: Asset,
-    prices: dict[str, Any] | None,
-) -> AssetSentiment | None:
+async def get_or_swr(asset: Asset) -> AssetSentiment | None:
     """Return a cached sentiment if available, scheduling SWR if stale."""
     cached, is_stale = await cache.get_cached(asset)
     if cached is None:
         return None
     if is_stale:
-        # Fire-and-forget: don't await, the user gets the stale row now.
-        asyncio.create_task(_refresh_in_background(asset, prices))
+        asyncio.create_task(_refresh_in_background(asset))
     return cached

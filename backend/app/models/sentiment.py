@@ -5,19 +5,17 @@ from typing import Literal
 from pydantic import BaseModel
 
 
-MarketType = Literal["bull", "bear", "neutral"]
+Consensus = Literal["bull", "bear", "neutral"]
 Confidence = Literal["low", "medium", "high"]
-Horizon = Literal["short-term", "medium-term", "long-term"]
 
 
 class AssetSentiment(BaseModel):
-    """Analyst-grade sentiment summary for a single asset."""
+    """Transcript-derived sentiment summary for a single asset."""
 
-    marketType: MarketType
+    consensus: Consensus
+    nearTermView: str
+    longTermView: str
     confidence: Confidence | None = None
-    horizon: Horizon | None = None
-    reasoning: str
-    analystView: str
     lastUpdated: str | None = None
 
 

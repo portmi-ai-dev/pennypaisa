@@ -20,9 +20,9 @@ interface SilverBullionProps {
   isMorphed?: boolean;
   isWeekend?: boolean;
   marketSentiment?: {
-    marketType: 'bull' | 'bear' | 'neutral';
-    reasoning: string;
-    analystView: string;
+    consensus: 'bull' | 'bear' | 'neutral';
+    nearTermView: string;
+    longTermView: string;
     lastUpdated?: string;
   } | null;
   otherBullionRef?: React.RefObject<THREE.Group | null>;
@@ -416,9 +416,9 @@ export const SilverBullion = forwardRef<THREE.Group, SilverBullionProps>(({
   const [, setHoveredIntelligence] = useState(false);
 
   const marketSentiment = propSentiment || {
-    marketType: 'bull' as const,
-    reasoning: "Silver is outperforming gold as the gold-to-silver ratio collapses toward 60. The combination of a massive short squeeze on the COMEX and unprecedented industrial demand for green energy infrastructure is creating a 'perfect storm' for silver prices.",
-    analystView: "Silver has entered the parabolic phase — multi-year resistance at $35 is now support, breakout confirmed on volume. Next target $48.50, with a test of $50 imminent and the real move starting once all-time highs clear.",
+    consensus: 'bull' as const,
+    nearTermView: "Silver outperforming gold as Au:Ag ratio collapses toward 60. Short squeeze on COMEX plus green energy demand creating strong near-term momentum.",
+    longTermView: "Multi-year breakout confirmed — $35 now support. Structural demand from solar and EV sectors underpins long-term bull case. Target $48-50 zone.",
     lastUpdated: "APRIL 14, 2026"
   };
   const [isJewelryExpanded, setIsJewelryExpanded] = useState(false);
@@ -1721,9 +1721,9 @@ export const SilverBullion = forwardRef<THREE.Group, SilverBullionProps>(({
                   depthOffset={-2}
                   onPointerOver={(e) => {
                     e.stopPropagation();
-                    if (marketSentiment.marketType === 'bull') {
+                    if (marketSentiment.consensus === 'bull') {
                       soundManager.playBullBellow();
-                    } else if (marketSentiment.marketType === 'bear') {
+                    } else if (marketSentiment.consensus === 'bear') {
                       soundManager.playBearRoar();
                     } else {
                       soundManager.playRuffle();

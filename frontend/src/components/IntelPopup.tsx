@@ -7,8 +7,6 @@ export interface IntelPopupProps {
   side: 'left' | 'right';
   asset: 'gold' | 'silver' | 'bitcoin';
   sentiment: AssetSentiment | null;
-  // When two popups share a side (e.g. silver and bitcoin both right), the
-  // caller can stack them vertically with this offset. Defaults to 110.
   topOffset?: number;
 }
 
@@ -30,15 +28,9 @@ const ACCENT: Record<'gold' | 'silver' | 'bitcoin', { primary: string; secondary
   },
 };
 
-const consensusColor = (t: AssetSentiment['marketType']) =>
-  t === 'bull' ? '#4caf50' : t === 'bear' ? '#ef5350' : 'rgba(255,255,255,0.55)';
+const consensusColor = (c: AssetSentiment['consensus']) =>
+  c === 'bull' ? '#4caf50' : c === 'bear' ? '#ef5350' : 'rgba(255,255,255,0.55)';
 
-/**
- * Floating glass-card replacement for the in-3D-scene Billboard intel panel.
- * Renders against the AssetPage's relative wrapper, anchored left or right.
- * Hidden whenever the user isn't hovering the corresponding XAU/XAG trigger
- * or when the asset has no sentiment data yet.
- */
 export const IntelPopup: React.FC<IntelPopupProps> = ({
   visible,
   side,
@@ -75,9 +67,6 @@ export const IntelPopup: React.FC<IntelPopupProps> = ({
             WebkitBackdropFilter: 'blur(24px)',
             color: '#e8e0d0',
             fontFamily: 'DM Sans, sans-serif',
-            // The popup is informational; let pointer events through on its
-            // content so users can select text but not block 3D scene clicks
-            // around it (the bounding rect is small).
             pointerEvents: 'auto',
           }}
         >
@@ -122,8 +111,8 @@ export const IntelPopup: React.FC<IntelPopupProps> = ({
               gap: 8,
               padding: '6px 12px',
               borderRadius: 999,
-              background: `${consensusColor(sentiment.marketType)}1f`,
-              border: `1px solid ${consensusColor(sentiment.marketType)}55`,
+              background: `${consensusColor(sentiment.consensus)}1f`,
+              border: `1px solid ${consensusColor(sentiment.consensus)}55`,
               marginBottom: 14,
             }}
           >
@@ -132,7 +121,7 @@ export const IntelPopup: React.FC<IntelPopupProps> = ({
                 width: 6,
                 height: 6,
                 borderRadius: '50%',
-                background: consensusColor(sentiment.marketType),
+                background: consensusColor(sentiment.consensus),
               }}
             />
             <span
@@ -140,34 +129,25 @@ export const IntelPopup: React.FC<IntelPopupProps> = ({
                 fontSize: 11,
                 letterSpacing: 1.8,
                 textTransform: 'uppercase',
-                color: consensusColor(sentiment.marketType),
+                color: consensusColor(sentiment.consensus),
                 fontWeight: 600,
               }}
             >
-              Consensus · {sentiment.marketType}
+              Consensus · {sentiment.consensus}
             </span>
           </div>
 
-          {/* Reasoning */}
-          {sentiment.reasoning && (
-            <p
-              style={{
-                fontSize: 13,
-                lineHeight: 1.55,
-                color: 'rgba(255,255,255,0.78)',
-                margin: '0 0 18px',
-              }}
-            >
-              {sentiment.reasoning}
-            </p>
-          )}
-
-          {/* Analyst card */}
+          {/* Near-term + Long-term cards */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <AnalystCard
-              name="Analyst View"
+              name="Near-Term · 1 Month"
               accent={accent.primary}
-              body={sentiment.analystView}
+              body={sentiment.nearTermView}
+            />
+            <AnalystCard
+              name="Long-Term · 1 Year"
+              accent={accent.primary}
+              body={sentiment.longTermView}
             />
           </div>
 
