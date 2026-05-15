@@ -35,6 +35,7 @@ Asset = str
 class GeminiGenerationResult:
     sentiment: AssetSentiment | None
     raw_text: str | None
+    prompt: str
     model: str
     feed_transcripts: bool
     grounding_enabled: bool
@@ -224,6 +225,7 @@ async def generate_sentiment_gemini(
     return GeminiGenerationResult(
         sentiment=sentiment,
         raw_text=text,
+        prompt=prompt,
         model=model_name,
         feed_transcripts=feed_transcripts,
         grounding_enabled=enable_grounding,

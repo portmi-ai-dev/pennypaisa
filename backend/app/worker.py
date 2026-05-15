@@ -39,6 +39,11 @@ from arq.cron import cron
 
 from app.core.config import settings
 from app.core.database import close_db, connect_db
+from app.sentiment.gemini.schema import ensure_schema as ensure_gemini_schema
+from app.sentiment.gemini.service import (
+    generate_and_cache as gemini_generate_and_cache,
+    refresh_all as gemini_refresh_all,
+)
 from app.yt_data_collector.video_id_corn import (
     ensure_schema as ensure_yt_schema,
     load_channel_urls,
@@ -140,6 +145,54 @@ async def yt_hourly_cron(ctx: dict[str, Any]) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Gemini sentiment — async jobs + twice-daily cron.
+#
+# Sentiment generation is moved off the API process because Gemini calls
+# (especially with grounding + thinking models) routinely take 10-40s and
+# would otherwise tie up uvicorn workers. The cron fires at 08:00 and 20:00
+# UTC; on-demand regeneration is dispatched via ``gemini_sentiment_job``.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def gemini_sentiment_job(
+    ctx: dict[str, Any],
+    asset: str,
+    feed_transcripts: bool = True,
+    enable_grounding: bool = True,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Generate Gemini sentiment for a single asset and cache it.
+
+    Used by the on-demand regenerate endpoint — returns the cached
+    response payload as a serialisable dict.
+    """
+    response = await gemini_generate_and_cache(
+        asset,  # type: ignore[arg-type]
+        feed_transcripts=feed_transcripts,
+        enable_grounding=enable_grounding,
+        model=model,
+    )
+    if response is None:
+        return {"asset": asset, "ok": False, "error": "Model returned no usable response."}
+    return {"asset": asset, "ok": True, "response": response.model_dump()}
+
+
+async def gemini_sentiment_cron(ctx: dict[str, Any]) -> None:
+    """Twice-daily Gemini refresh — runs all 3 assets sequentially."""
+    logger.info("gemini sentiment cron tick: refreshing all assets")
+    try:
+        results = await gemini_refresh_all(
+            feed_transcripts=True,
+            enable_grounding=True,
+            model=settings.GEMINI_MODEL,
+        )
+        ok = sum(1 for v in results.values() if v is not None)
+        logger.info("gemini sentiment cron tick: %d/3 assets refreshed", ok)
+    except Exception as exc:
+        logger.warning("gemini sentiment cron tick failed: %s", exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Worker lifecycle — boot the asyncpg pool once per worker process so jobs
 # can `async with get_db() as conn:` immediately.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -149,9 +202,10 @@ async def startup(ctx: dict[str, Any]) -> None:
     if settings.NEON_DATABASE_URL:
         await connect_db()
         await ensure_yt_schema()
-        logger.info("worker: db pool + yt schema ready")
+        await ensure_gemini_schema()
+        logger.info("worker: db pool + yt + gemini schemas ready")
     else:
-        logger.warning("worker: NEON_DATABASE_URL unset — yt jobs will fail")
+        logger.warning("worker: NEON_DATABASE_URL unset — jobs will fail")
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -228,11 +282,19 @@ class WorkerSettings:
     """arq worker configuration. Run with ``arq app.worker.WorkerSettings``."""
 
     redis_settings = _build_redis_settings()
-    functions = [transcript_job, backfill_scrape_job, backfill_transcript_job]
+    functions = [
+        transcript_job,
+        backfill_scrape_job,
+        backfill_transcript_job,
+        gemini_sentiment_job,
+    ]
     cron_jobs = [
         # Minute 5 of every hour — small offset away from :00 to avoid
         # piling onto whatever other systems run at the top of the hour.
         cron(yt_hourly_cron, minute={5}),
+        # Gemini sentiment: twice daily at 08:00 + 20:00 UTC, minute 10
+        # (offset from yt cron so they don't race for DB connections).
+        cron(gemini_sentiment_cron, hour={8, 20}, minute={10}),
     ]
     on_startup = startup
     on_shutdown = shutdown

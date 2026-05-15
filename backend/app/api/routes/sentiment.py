@@ -12,7 +12,7 @@ from app.sentiment.aggregator import (
     fetch_asset_sentiment,
     regenerate_single_asset,
 )
-from app.sentiment.gemini_generator import generate_sentiment_gemini
+from app.sentiment.gemini.generator import generate_sentiment_gemini
 from app.models.sentiment import (
     AssetSentiment,
     BulkSentimentRegenerateResponse,

@@ -7,8 +7,7 @@ from app.core.config import settings
 from app.core.database import close_db, connect_db
 from app.core.http import create_http_client
 from app.core.redis_client import close_redis, connect_redis
-from app.sentiment.refresher import run_refresher
-from app.sentiment.schema import ensure_schema
+from app.sentiment.gemini.schema import ensure_schema as ensure_gemini_schema
 from app.yt_data_collector.video_id_corn import ensure_schema as ensure_yt_schema
 
 
@@ -22,39 +21,33 @@ async def lifespan(app) -> AsyncIterator[None]:
         try:
             await connect_db()
             db_ready = True
-            await ensure_schema()
-            # Keep yt schema bootstrap in the API too — the API can still
-            # serve read-only queries against video_ids/video_transcripts
-            # even though scraping itself runs in the worker.
+            # Worker-managed schemas — bootstrap from API too so read-only
+            # queries succeed even if the worker hasn't started yet.
             try:
                 await ensure_yt_schema()
             except Exception as exc:
                 print(f"YouTube schema bootstrap failed: {exc}")
+            try:
+                await ensure_gemini_schema()
+            except Exception as exc:
+                print(f"Gemini sentiment schema bootstrap failed: {exc}")
         except Exception as exc:
             print(f"Database connection failed on startup: {exc}")
     await connect_redis()
 
-    # arq pool — used by yt routes to enqueue jobs onto the worker.
+    # arq pool — API uses this to enqueue jobs to the worker.
     try:
         await connect_arq()
     except Exception as exc:
         print(f"arq pool init failed: {exc}")
 
-    # Gemini intel refresher stays in-process (cheap, single API call per
-    # asset per hour). YouTube cron has been moved to the arq worker.
-    refresher_task: asyncio.Task | None = None
-    if db_ready:
-        refresher_task = asyncio.create_task(run_refresher(http_client))
+    # NOTE: In-process Groq refresher REMOVED. All sentiment generation
+    # now lives in the arq worker (twice-daily Gemini cron). Groq
+    # endpoints remain for live A/B comparison but never write to Postgres.
 
     try:
         yield
     finally:
-        if refresher_task is not None:
-            refresher_task.cancel()
-            try:
-                await refresher_task
-            except (asyncio.CancelledError, Exception):
-                pass
         await close_arq()
         await close_redis()
         if db_ready:

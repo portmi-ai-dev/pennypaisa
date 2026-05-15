@@ -1,21 +1,17 @@
-"""Shared cache + Groq orchestration for the per-asset fetchers.
+"""Shared Groq generation orchestration — ephemeral, no DB persistence.
 
-Three behaviours all the fetchers need:
-
-1. **Cache hit** → return immediately.
-2. **Stale-while-revalidate** → return the stale row, kick off a background
-   refresh under a per-asset advisory lock so only one worker calls Groq.
-3. **Cold miss** → block on a fresh Groq call (rare under healthy cron).
+Groq sentiment results are NOT cached in Neon. Only Gemini sentiment is
+persisted (see ``app.sentiment.gemini``). The Groq endpoints remain
+operational for live A/B comparison against Gemini, but every call is
+freshly generated.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Literal
 
-from app.sentiment import cache
 from app.sentiment.prompts import build_prompt
 from app.sentiment.transcripts import (
     fetch_recent_transcripts,
@@ -24,6 +20,9 @@ from app.sentiment.transcripts import (
 from app.sentiment.utils import generate_sentiment
 from app.models.sentiment import AssetSentiment
 
+logger = logging.getLogger(__name__)
+
+Asset = Literal["gold", "silver", "crypto"]
 
 GROQ_MODEL_NAME = "llama-3.3-70b-versatile"
 
@@ -38,15 +37,12 @@ class SentimentGenerationResult:
     completion_tokens: int | None = None
     total_tokens: int | None = None
 
-logger = logging.getLogger(__name__)
-
-Asset = Literal["gold", "silver", "crypto"]
 
 _transcript_block_cache: str | None = None
 
 
 async def _get_transcript_block() -> str:
-    """Fetch and format recent transcripts, with simple in-memory cache."""
+    """In-memory transcript cache for a single Groq batch."""
     global _transcript_block_cache
     if _transcript_block_cache is not None:
         return _transcript_block_cache
@@ -60,27 +56,16 @@ async def _get_transcript_block() -> str:
 
 
 def clear_transcript_cache() -> None:
-    """Reset the transcript cache — called at the start of each refresh cycle."""
+    """Reset the in-memory transcript cache."""
     global _transcript_block_cache
     _transcript_block_cache = None
 
 
 async def generate_and_cache_with_meta(asset: Asset) -> SentimentGenerationResult:
-    """Call Groq for ``asset``, persist cache + history, return full metadata."""
+    """Call Groq and return result + metadata. Does NOT persist to DB."""
     transcript_block = await _get_transcript_block()
     prompt = build_prompt(asset, transcript_block=transcript_block)
     result = await generate_sentiment(prompt)
-    if result.sentiment is not None:
-        await cache.set_cached(
-            asset,
-            result.sentiment,
-            prompt=prompt,
-            raw_response=result.raw_text,
-            model=GROQ_MODEL_NAME,
-            prompt_tokens=result.prompt_tokens,
-            completion_tokens=result.completion_tokens,
-            total_tokens=result.total_tokens,
-        )
     return SentimentGenerationResult(
         sentiment=result.sentiment,
         model=GROQ_MODEL_NAME,
@@ -91,30 +76,6 @@ async def generate_and_cache_with_meta(asset: Asset) -> SentimentGenerationResul
 
 
 async def generate_and_cache(asset: Asset) -> AssetSentiment | None:
-    """Thin wrapper — returns only sentiment for cron/SWR paths."""
+    """Thin wrapper for callers that don't need metadata."""
     result = await generate_and_cache_with_meta(asset)
     return result.sentiment
-
-
-async def _refresh_in_background(asset: Asset) -> None:
-    """Background SWR refresh: dedup'd via Postgres advisory lock."""
-    got = await cache.try_acquire_refresh_lock(asset)
-    if not got:
-        logger.debug("SWR refresh skipped (%s): another worker holds the lock", asset)
-        return
-    try:
-        await generate_and_cache(asset)
-    except Exception as exc:
-        logger.warning("SWR refresh failed (%s): %s", asset, exc)
-    finally:
-        await cache.release_refresh_lock(asset)
-
-
-async def get_or_swr(asset: Asset) -> AssetSentiment | None:
-    """Return a cached sentiment if available, scheduling SWR if stale."""
-    cached, is_stale = await cache.get_cached(asset)
-    if cached is None:
-        return None
-    if is_stale:
-        asyncio.create_task(_refresh_in_background(asset))
-    return cached
