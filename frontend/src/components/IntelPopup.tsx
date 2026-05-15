@@ -137,13 +137,22 @@ export const IntelPopup: React.FC<IntelPopupProps> = ({
             </span>
           </div>
 
-          {/* Summary + Analyst View cards */}
+          {/* Summary — plain text, no box, no label */}
+          {sentiment.summary && (
+            <p
+              style={{
+                fontSize: 13,
+                lineHeight: 1.55,
+                color: 'rgba(255,255,255,0.82)',
+                margin: '0 0 14px',
+              }}
+            >
+              {sentiment.summary}
+            </p>
+          )}
+
+          {/* Analyst View — boxy card */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <AnalystCard
-              name="Summary"
-              accent={accent.primary}
-              body={sentiment.summary}
-            />
             <AnalystCard
               name="Analyst View"
               accent={accent.primary}
