@@ -142,7 +142,7 @@ export const AppShell: React.FC = () => {
     }
 
     try {
-      const response = await apiFetch('/api/intel/sentiment');
+      const response = await apiFetch('/api/sentiment');
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) return;
       const data = await response.json();
@@ -168,7 +168,7 @@ export const AppShell: React.FC = () => {
 
     const slug = asset === 'bitcoin' ? 'crypto' : asset;
     try {
-      const response = await apiFetch(`/api/intel/sentiment/${slug}`);
+      const response = await apiFetch(`/api/sentiment/${slug}`);
       if (!response.ok) return;
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) return;
