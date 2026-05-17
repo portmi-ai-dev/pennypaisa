@@ -25,10 +25,17 @@ def current_timestamp() -> str:
 
 
 async def _read_gemini_sentiment(asset: Asset) -> AssetSentiment | None:
-    """Read a single asset's cached Gemini sentiment, returning the inner AssetSentiment."""
+    """Read a single asset's cached Gemini sentiment, returning the inner AssetSentiment.
+
+    Always serves the last known row regardless of age — empty cache is
+    the only failure mode. Staleness is logged but does not block serving.
+    """
     cached, is_stale = await gemini_cache.get_cached(asset)
     if cached is None:
-        logger.info("sentiment cache MISS asset=%s (no row or expired)", asset)
+        logger.warning(
+            "sentiment cache EMPTY asset=%s — no row in gemini_sentiment_cache",
+            asset,
+        )
         return None
     logger.info(
         "sentiment cache HIT asset=%s stale=%s model=%s",

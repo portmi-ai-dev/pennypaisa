@@ -40,6 +40,7 @@ class GeminiGenerationResult:
     feed_transcripts: bool
     grounding_enabled: bool
     grounding_sources_count: int = 0
+    grounding_metadata: dict[str, Any] | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     thoughts_tokens: int | None = None
@@ -152,6 +153,67 @@ def _count_grounding_sources(response: Any) -> int:
         return 0
 
 
+def _extract_grounding_metadata(response: Any) -> dict[str, Any] | None:
+    """Extract full grounding metadata: search queries + fetched chunks.
+
+    Returns dict with:
+        search_queries: list of queries Gemini issued
+        chunks: list of {title, uri, snippet} for each grounding result
+        supports: list of {text, chunk_indices} showing which response
+                  segments are backed by which sources
+    """
+    try:
+        candidates = getattr(response, "candidates", None) or []
+        if not candidates:
+            return None
+        grounding = getattr(candidates[0], "grounding_metadata", None)
+        if grounding is None:
+            return None
+
+        search_queries = getattr(grounding, "web_search_queries", None) or []
+
+        raw_chunks = getattr(grounding, "grounding_chunks", None) or []
+        chunks = []
+        for chunk in raw_chunks:
+            web = getattr(chunk, "web", None)
+            if web:
+                chunks.append({
+                    "title": getattr(web, "title", None),
+                    "uri": getattr(web, "uri", None),
+                })
+            else:
+                retrieved = getattr(chunk, "retrieved_context", None)
+                if retrieved:
+                    chunks.append({
+                        "title": getattr(retrieved, "title", None),
+                        "uri": getattr(retrieved, "uri", None),
+                    })
+
+        raw_supports = getattr(grounding, "grounding_supports", None) or []
+        supports = []
+        for support in raw_supports:
+            segment = getattr(support, "segment", None)
+            text = getattr(segment, "text", "") if segment else ""
+            indices = getattr(support, "grounding_chunk_indices", None) or []
+            confidence_scores = getattr(support, "confidence_scores", None) or []
+            supports.append({
+                "text": text,
+                "chunk_indices": list(indices),
+                "confidence_scores": [float(s) for s in confidence_scores],
+            })
+
+        if not search_queries and not chunks:
+            return None
+
+        return {
+            "search_queries": list(search_queries),
+            "chunks": chunks,
+            "supports": supports,
+        }
+    except Exception:
+        return None
+
+
 async def generate_sentiment_gemini(
     asset: str,
     *,
@@ -187,7 +249,7 @@ async def generate_sentiment_gemini(
 
     config_kwargs: dict[str, Any] = {
         "temperature": 0.0,
-        "max_output_tokens": 2048,
+        "max_output_tokens": 8192,
     }
     if enable_grounding:
         config_kwargs["tools"] = [
@@ -209,6 +271,7 @@ async def generate_sentiment_gemini(
 
     tokens = _extract_token_usage(response)
     sources_count = _count_grounding_sources(response)
+    grounding_meta = _extract_grounding_metadata(response)
     text = response.text or ""
 
     sentiment: AssetSentiment | None = None
@@ -230,6 +293,7 @@ async def generate_sentiment_gemini(
         feed_transcripts=feed_transcripts,
         grounding_enabled=enable_grounding,
         grounding_sources_count=sources_count,
+        grounding_metadata=grounding_meta,
         prompt_tokens=tokens["prompt"],
         completion_tokens=tokens["completion"],
         thoughts_tokens=tokens["thoughts"],

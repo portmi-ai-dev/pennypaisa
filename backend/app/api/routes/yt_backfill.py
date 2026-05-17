@@ -134,3 +134,53 @@ async def yt_backfill_transcript_status(
     arq: ArqRedis = Depends(get_arq),
 ) -> JobStatusResponse:
     return await _read_job_status(job_id, arq)
+
+
+# ---------------------------------------------------------------------------
+# Test endpoint: TranscriptAPI.com direct fetch (no proxy/assemblyai needed)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/yt/test_transcript/{video_id}",
+    summary="[TEST] Fetch transcript via transcriptapi.com",
+)
+async def test_transcript_api(video_id: str):
+    """Test endpoint — fetches transcript directly from transcriptapi.com.
+
+    No proxy, no AssemblyAI, no yt-dlp. Just a direct API call.
+    """
+    import httpx
+
+    api_key = (settings.TRANSCRIPT_API_KEY or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=500, detail="TRANSCRIPT_API_KEY not configured")
+
+    url = "https://transcriptapi.com/api/v2/youtube/transcript"
+    params = {"video_url": video_id, "format": "json"}
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url, params=params, headers=headers)
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail=f"transcriptapi.com returned {resp.status_code}: {resp.text[:300]}",
+        )
+
+    data = resp.json()
+    transcript = data.get("transcript", "")
+    text = ""
+    if isinstance(transcript, list):
+        text = " ".join(seg.get("text", "") for seg in transcript)
+    elif isinstance(transcript, str):
+        text = transcript
+
+    return {
+        "video_id": video_id,
+        "source": "transcriptapi.com",
+        "chars": len(text),
+        "transcript": text,
+        "raw_response_keys": list(data.keys()),
+    }

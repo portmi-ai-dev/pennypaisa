@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     YT_COOKIES_FILE: str | None = Field(
         None, description="Path to Netscape cookies.txt for yt-dlp"
     )
+    # Webshare or any HTTP proxy for youtube-transcript-api caption fetches.
+    # Format: http://user:pass@host:port
+    YT_CAPTIONS_PROXY_URL: str | None = Field(
+        None, description="HTTP proxy for youtube-transcript-api caption fetches"
+    )
+    # transcriptapi.com API key for direct transcript fetching
+    TRANSCRIPT_API_KEY: str | None = Field(
+        None, description="transcriptapi.com API key"
+    )
 
     # ── Worker timeouts (arq + per-video) ────────────────────────────────
     YT_BULK_JOB_TIMEOUT_SECONDS: int = Field(

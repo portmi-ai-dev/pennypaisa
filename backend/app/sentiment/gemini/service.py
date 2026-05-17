@@ -31,6 +31,7 @@ def _result_to_response(result: GeminiGenerationResult) -> GeminiSentimentRespon
         feedTranscripts=result.feed_transcripts,
         groundingEnabled=result.grounding_enabled,
         groundingSourcesCount=result.grounding_sources_count,
+        groundingMetadata=result.grounding_metadata,
         promptTokens=result.prompt_tokens,
         completionTokens=result.completion_tokens,
         thoughtsTokens=result.thoughts_tokens,
@@ -69,6 +70,7 @@ async def generate_and_cache(
         response,
         prompt=result.prompt,
         raw_response=result.raw_text,
+        grounding_metadata=result.grounding_metadata,
     )
     return response
 

@@ -1,6 +1,7 @@
 """YouTube audio downloader + AssemblyAI transcription pipeline.
 
 Flow: yt-dlp downloads audio → upload to AssemblyAI → poll for result.
+Fallback: youtube-transcript-api fetches captions directly (no audio download).
 Supports proxy and cookie-based auth to avoid YouTube IP blocks.
 """
 
@@ -222,24 +223,111 @@ def transcribe_video(video_url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Fallback: youtube-transcript-api (captions only, no audio download)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_via_transcript_api(video_id: str) -> str | None:
+    """Fetch transcript via transcriptapi.com (primary, most reliable).
+
+    Handles YouTube blocks server-side. 1 credit per successful request.
+    Returns None on any failure (caller falls through to next strategy).
+    """
+    api_key = (settings.TRANSCRIPT_API_KEY or "").strip()
+    if not api_key:
+        return None
+
+    try:
+        resp = requests.get(
+            "https://transcriptapi.com/api/v2/youtube/transcript",
+            params={"video_url": video_id, "format": "json"},
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            logger.debug(
+                "transcriptapi.com %d for %s: %s",
+                resp.status_code, video_id, resp.text[:100],
+            )
+            return None
+
+        data = resp.json()
+        transcript = data.get("transcript", "")
+        if isinstance(transcript, list):
+            text = " ".join(seg.get("text", "") for seg in transcript)
+        elif isinstance(transcript, str):
+            text = transcript
+        else:
+            return None
+
+        return text.strip() if text.strip() else None
+    except Exception as exc:
+        logger.debug("transcriptapi.com failed for %s: %s", video_id, str(exc)[:200])
+        return None
+
+
+def _fetch_captions_fallback(video_id: str) -> str | None:
+    """Fetch YouTube captions directly via youtube-transcript-api (fallback).
+
+    Tries with proxy first (if configured), then without.
+    Returns None if no captions available.
+    """
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        from youtube_transcript_api.proxies import GenericProxyConfig
+
+        proxy_url = (settings.YT_CAPTIONS_PROXY_URL or "").strip()
+
+        if proxy_url:
+            ytt_api = YouTubeTranscriptApi(
+                proxy_config=GenericProxyConfig(
+                    http_url=proxy_url,
+                    https_url=proxy_url,
+                )
+            )
+        else:
+            ytt_api = YouTubeTranscriptApi()
+
+        transcript_list = ytt_api.fetch(video_id)
+        text = " ".join(snippet.text for snippet in transcript_list)
+        return text.strip() if text.strip() else None
+    except Exception as exc:
+        logger.debug("captions fallback failed for %s: %s", video_id, str(exc)[:200])
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 
 def get_transcript_for_url(video_url: str) -> TranscriptResult:
-    """Get transcript for a YouTube video URL via AssemblyAI.
+    """Get transcript for a YouTube video URL.
 
-    Downloads audio with yt-dlp, transcribes with AssemblyAI.
-    Raises RuntimeError if transcription fails or is unavailable.
+    Strategy (waterfall — first success wins):
+    1. transcriptapi.com — most reliable, handles YT blocks, 1 credit/req
+    2. youtube-transcript-api — free, direct captions, needs proxy on cloud
+    3. yt-dlp + AssemblyAI — expensive fallback, downloads audio
     """
     video_id = extract_video_id(video_url)
     if not video_id:
         raise ValueError("Invalid YouTube URL")
 
+    # 1. transcriptapi.com (primary)
+    text = _fetch_via_transcript_api(video_id)
+    if text:
+        return TranscriptResult(video_id=video_id, source="transcriptapi", text=text)
+
+    # 2. youtube-transcript-api (free fallback)
+    text = _fetch_captions_fallback(video_id)
+    if text:
+        return TranscriptResult(video_id=video_id, source="youtube_captions", text=text)
+
+    # 3. yt-dlp + AssemblyAI (expensive last resort)
     api_key = (settings.assemblyai_api_key or "").strip()
     if not api_key:
         raise RuntimeError(
-            "ASSEMBLYAI_API_KEY is not configured — required for transcription"
+            "All transcript sources failed and ASSEMBLYAI_API_KEY not configured"
         )
 
     transcript = transcribe_video(video_url)

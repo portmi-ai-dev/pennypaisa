@@ -531,21 +531,41 @@ async def transcribe_missing(*, max_age_days: int) -> dict[str, int]:
             failed += len(rows) - idx
             break
 
-        # ── yt-dlp → AssemblyAI pipeline ────────────────────────────
+        # ── Waterfall: transcriptapi → captions → yt-dlp+assemblyai ──
         video_url = f"https://www.youtube.com/watch?v={video_id}"
         try:
-            text = await asyncio.wait_for(
-                asyncio.to_thread(transcribe_video, video_url),
-                timeout=per_video_timeout,
+            from app.yt_data_collector.yt_transcriber import (
+                _fetch_via_transcript_api,
+                _fetch_captions_fallback,
             )
+
+            # 1. transcriptapi.com (primary, most reliable)
+            text = await asyncio.to_thread(_fetch_via_transcript_api, video_id)
+            source = "transcriptapi"
+
+            # 2. youtube-transcript-api (free fallback)
+            if not text:
+                text = await asyncio.to_thread(_fetch_captions_fallback, video_id)
+                source = "captions"
+
+            # 3. yt-dlp + AssemblyAI (expensive last resort)
+            if not text:
+                text = await asyncio.wait_for(
+                    asyncio.to_thread(transcribe_video, video_url),
+                    timeout=per_video_timeout,
+                )
+                source = "assemblyai"
+
             text = (text or "").strip()
             if not text:
-                raise RuntimeError("AssemblyAI returned empty transcript")
+                raise RuntimeError("All transcript sources returned empty")
 
             await _store_transcript(
                 video_record=record, assembly_ai_transcript=text
             )
-            logger.info("yt transcript stored | video_id=%s", video_id)
+            logger.info(
+                "yt transcript stored (%s) | video_id=%s", source, video_id
+            )
             transcribed += 1
             consecutive_failures = 0
         except asyncio.TimeoutError:

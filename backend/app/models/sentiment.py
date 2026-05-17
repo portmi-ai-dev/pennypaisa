@@ -1,6 +1,6 @@
 """Pydantic models for AI market intelligence responses."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -66,6 +66,7 @@ class GeminiSentimentResponse(BaseModel):
     feedTranscripts: bool
     groundingEnabled: bool
     groundingSourcesCount: int = 0
+    groundingMetadata: dict[str, Any] | None = None
     promptTokens: int | None = None
     completionTokens: int | None = None
     thoughtsTokens: int | None = None

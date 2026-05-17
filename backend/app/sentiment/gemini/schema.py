@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS gemini_sentiment_history (
     feed_transcripts         BOOLEAN,
     grounding_enabled        BOOLEAN,
     grounding_sources_count  INTEGER,
+    grounding_metadata       JSONB,
     prompt_tokens            INTEGER,
     completion_tokens        INTEGER,
     thoughts_tokens          INTEGER,
@@ -49,12 +50,21 @@ CREATE INDEX IF NOT EXISTS idx_gemini_history_asset_time
     ON gemini_sentiment_history (asset, generated_at DESC);
 """
 
+_MIGRATIONS = [
+    """
+    ALTER TABLE gemini_sentiment_history
+        ADD COLUMN IF NOT EXISTS grounding_metadata JSONB;
+    """,
+]
+
 
 async def ensure_schema() -> None:
     """Create / patch the Gemini cache + history tables."""
     try:
         async with get_db() as conn:
             await conn.execute(_DDL)
+            for migration in _MIGRATIONS:
+                await conn.execute(migration)
         logger.info("gemini sentiment schema ready")
     except Exception as exc:
         logger.warning("Failed to ensure gemini sentiment schema: %s", exc)

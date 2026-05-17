@@ -17,4 +17,5 @@ slowapi
 # workaround and is what yfinance uses under the hood.
 curl_cffi
 yt-dlp
+youtube-transcript-api
 requests

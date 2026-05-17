@@ -107,6 +107,24 @@ async def get_all_gemini_sentiment(request: Request) -> dict[str, object]:
     return out
 
 
+@router.get(
+    "/status",
+    summary="Gemini sentiment cache freshness per asset",
+)
+@limiter.limit("30/minute")
+async def gemini_cache_status(request: Request) -> dict[str, object]:
+    """Inspection endpoint — shows cache age + freshness for monitoring.
+
+    Tells you when each asset was last refreshed and whether the row is
+    fresh / stale / expired. Use to debug missing sentiment in the UI.
+    """
+    status = await gemini_cache.get_cache_status()
+    return {
+        "assets": status,
+        "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Async regeneration — enqueue + poll pattern.
 # ─────────────────────────────────────────────────────────────────────────────

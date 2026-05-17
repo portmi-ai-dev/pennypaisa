@@ -13,9 +13,10 @@ Tables (see ``app/sentiment/gemini/schema.py``):
 
 from __future__ import annotations
 
+import json as _json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from app.core.database import get_db
 from app.models.sentiment import GeminiSentimentResponse
@@ -41,10 +42,14 @@ async def get_cached(
 ) -> tuple[GeminiSentimentResponse | None, bool]:
     """Return ``(response, is_stale)``.
 
-    * ``(response, False)`` — fresh row inside its TTL.
-    * ``(response, True)``  — expired but within SWR window; caller
-      should fire background refresh.
-    * ``(None, False)``     — no row or expired beyond SWR.
+    ALWAYS serves the last known row if one exists, regardless of age.
+    A 3-day-old row is better than nothing — the UI can show "last updated
+    N hours ago" rather than failing the request. The ``is_stale`` flag
+    tells callers whether to schedule a background refresh.
+
+    * ``(response, False)`` — row exists and is within TTL (fresh).
+    * ``(response, True)``  — row exists but past TTL (stale; refresh suggested).
+    * ``(None, False)``     — no row in the table at all.
     """
     try:
         async with get_db() as conn:
@@ -61,15 +66,8 @@ async def get_cached(
 
         response = GeminiSentimentResponse.model_validate_json(row["response"])
         expires_at: datetime = row["expires_at"]
-        now = datetime.now(timezone.utc)
-
-        if now <= expires_at:
-            return response, False
-
-        stale_until = expires_at + timedelta(seconds=STALE_TTL_SECONDS)
-        if now <= stale_until:
-            return response, True
-        return None, False
+        is_stale = datetime.now(timezone.utc) > expires_at
+        return response, is_stale
     except Exception as exc:
         logger.debug("Gemini cache read failed (%s): %s", asset, exc)
         return None, False
@@ -106,10 +104,15 @@ async def set_cached(
     *,
     prompt: str | None = None,
     raw_response: str | None = None,
+    grounding_metadata: dict[str, Any] | None = None,
 ) -> None:
     """UPSERT the cache row + append history record in one transaction."""
     payload = response.model_dump_json()
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=TTL_SECONDS)
+
+    grounding_json = (
+        _json.dumps(grounding_metadata) if grounding_metadata else None
+    )
 
     try:
         async with get_db() as conn:
@@ -136,12 +139,12 @@ async def set_cached(
                         INSERT INTO gemini_sentiment_history
                             (asset, prompt, response, raw_response, model,
                              feed_transcripts, grounding_enabled,
-                             grounding_sources_count,
+                             grounding_sources_count, grounding_metadata,
                              prompt_tokens, completion_tokens,
                              thoughts_tokens, tool_use_tokens,
                              cached_tokens, total_tokens)
-                        VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9,
-                                $10, $11, $12, $13, $14)
+                        VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8,
+                                $9::jsonb, $10, $11, $12, $13, $14, $15)
                         """,
                         asset,
                         prompt,
@@ -151,6 +154,7 @@ async def set_cached(
                         response.feedTranscripts,
                         response.groundingEnabled,
                         response.groundingSourcesCount,
+                        grounding_json,
                         response.promptTokens,
                         response.completionTokens,
                         response.thoughtsTokens,
@@ -160,6 +164,70 @@ async def set_cached(
                     )
     except Exception as exc:
         logger.debug("Gemini cache write failed (%s): %s", asset, exc)
+
+
+async def get_cache_status() -> dict[str, dict[str, object]]:
+    """Return cache freshness info per asset for monitoring / self-heal.
+
+    Each asset entry contains:
+        present: bool — is there a row at all
+        updated_at: ISO timestamp (or None)
+        expires_at: ISO timestamp (or None)
+        age_seconds: how many seconds since updated_at (or None)
+        is_fresh: bool — currently within TTL
+        is_stale: bool — past TTL but within SWR window
+        is_expired: bool — past SWR window
+    """
+    from datetime import datetime, timezone
+
+    out: dict[str, dict[str, object]] = {}
+    try:
+        async with get_db() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT asset, updated_at, expires_at, model
+                FROM gemini_sentiment_cache
+                """
+            )
+        by_asset = {r["asset"]: r for r in rows}
+    except Exception as exc:
+        logger.warning("get_cache_status query failed: %s", exc)
+        by_asset = {}
+
+    now = datetime.now(timezone.utc)
+    for asset in ("crypto", "gold", "silver"):
+        row = by_asset.get(asset)
+        if row is None:
+            out[asset] = {
+                "present": False,
+                "updated_at": None,
+                "expires_at": None,
+                "age_seconds": None,
+                "model": None,
+                "is_fresh": False,
+                "is_stale": False,
+                "is_expired": True,
+            }
+            continue
+
+        updated_at: datetime = row["updated_at"]
+        expires_at: datetime = row["expires_at"]
+        age = (now - updated_at).total_seconds()
+        stale_until = expires_at.timestamp() + STALE_TTL_SECONDS
+        is_fresh = now <= expires_at
+        is_expired = now.timestamp() > stale_until
+        is_stale = (not is_fresh) and (not is_expired)
+        out[asset] = {
+            "present": True,
+            "updated_at": updated_at.isoformat(),
+            "expires_at": expires_at.isoformat(),
+            "age_seconds": age,
+            "model": row["model"],
+            "is_fresh": is_fresh,
+            "is_stale": is_stale,
+            "is_expired": is_expired,
+        }
+    return out
 
 
 async def invalidate(asset: Asset | None = None) -> None:

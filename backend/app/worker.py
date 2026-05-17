@@ -45,6 +45,7 @@ from app.core.logging_config import configure_logging
 # logger.info() call in worker jobs produces visible output.
 configure_logging()
 
+from app.sentiment.gemini import cache as gemini_cache
 from app.sentiment.gemini.schema import ensure_schema as ensure_gemini_schema
 from app.sentiment.gemini.service import (
     generate_and_cache as gemini_generate_and_cache,
@@ -204,12 +205,85 @@ async def gemini_sentiment_cron(ctx: dict[str, Any]) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _log_next_cron_fires() -> None:
+    """Log local + UTC time of the next gemini sentiment cron fire.
+
+    arq's ``cron(hour={8, 20})`` interprets hours in the SYSTEM clock, which
+    on most cloud VPS is UTC. Local dev macOS uses local time. Surfacing
+    both makes it obvious whether the worker will fire at the expected wall
+    clock time on this host.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    now_local = datetime.now()
+    now_utc = datetime.now(timezone.utc)
+    fires_local: list[datetime] = []
+    for hour in (8, 20):
+        candidate = now_local.replace(hour=hour, minute=10, second=0, microsecond=0)
+        if candidate <= now_local:
+            candidate += timedelta(days=1)
+        fires_local.append(candidate)
+    next_fire_local = min(fires_local)
+    delta_s = (next_fire_local - now_local).total_seconds()
+    logger.info(
+        "gemini sentiment cron: schedule=hour={8,20} minute=10 (system clock) | "
+        "system_now=%s | utc_now=%s | next_fire(system_local)=%s | in %.0f minutes",
+        now_local.isoformat(timespec="seconds"),
+        now_utc.isoformat(timespec="seconds"),
+        next_fire_local.isoformat(timespec="seconds"),
+        delta_s / 60,
+    )
+
+
+async def _seed_cache_if_stale(ctx: dict[str, Any]) -> None:
+    """Self-heal: if any Gemini cache row is missing or expired, refresh now.
+
+    Runs once on worker startup so the system recovers from missed cron
+    fires (worker downtime, deploys, etc.) without waiting up to 12 hours.
+    """
+    try:
+        status = await gemini_cache.get_cache_status()
+    except Exception as exc:
+        logger.warning("startup self-heal: cache status check failed: %s", exc)
+        return
+
+    needs_refresh = [
+        asset for asset, s in status.items()
+        if (not s["present"]) or s["is_expired"]
+    ]
+    if not needs_refresh:
+        logger.info(
+            "startup self-heal: all assets fresh, ages=%s",
+            {a: f"{s['age_seconds']:.0f}s" for a, s in status.items()},
+        )
+        return
+
+    logger.info(
+        "startup self-heal: cache stale/missing for %s — triggering refresh",
+        needs_refresh,
+    )
+    try:
+        results = await gemini_refresh_all(
+            feed_transcripts=True,
+            enable_grounding=True,
+            model=settings.GEMINI_MODEL,
+        )
+        ok = sum(1 for v in results.values() if v is not None)
+        logger.info("startup self-heal complete: %d/%d assets refreshed", ok, len(results))
+    except Exception as exc:
+        logger.warning("startup self-heal failed: %s", exc)
+
+
 async def startup(ctx: dict[str, Any]) -> None:
     if settings.NEON_DATABASE_URL:
         await connect_db()
         await ensure_yt_schema()
         await ensure_gemini_schema()
         logger.info("worker: db pool + yt + gemini schemas ready")
+        _log_next_cron_fires()
+        # Self-heal: catch up if cache is empty or stale (e.g. worker was
+        # down during the last cron window, or this is first deploy).
+        await _seed_cache_if_stale(ctx)
     else:
         logger.warning("worker: NEON_DATABASE_URL unset — jobs will fail")
 
